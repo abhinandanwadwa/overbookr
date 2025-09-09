@@ -21,13 +21,17 @@ func NewRouter(deps AppDeps) *gin.Engine {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
+	// Event routes
 	eventHandler := handlers.NewEventsHandler(deps.DB)
-	userHandler := handlers.NewUsersHandler(deps.DB)
 	events := router.Group("/events")
 	{
-		events.POST("/", eventHandler.CreateEvent)
+		events.POST("/", middleware.AuthMiddleware(), middleware.AdminMiddleware(), eventHandler.CreateEvent)
 		events.GET("/", eventHandler.GetEvents)
+		events.GET("/:id", eventHandler.GetEventByID)
 	}
+
+	// User routes
+	userHandler := handlers.NewUsersHandler(deps.DB)
 	users := router.Group("/users")
 	{
 		users.POST("/register", userHandler.Register)

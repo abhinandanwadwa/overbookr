@@ -7,6 +7,7 @@ import (
 
 	"github.com/abhinandanwadwa/overbookr/internal/db"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -130,6 +131,55 @@ func (h *EventsHandler) GetEvents(c *gin.Context) {
 			CreatedAt:   event.CreatedAt.Time,
 			UpdatedAt:   event.UpdatedAt.Time,
 		})
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+func (h *EventsHandler) GetEventByID(c *gin.Context) {
+	id := c.Param("id")
+	uid, err := uuid.Parse(id)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid UUID",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Validate UUID
+	event, err := h.db.GetEventByID(context.Background(), pgtype.UUID{Bytes: uid, Valid: true})
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": "Event not found",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to fetch event",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Convert to response format
+	response := EventResponse{
+		ID:          event.ID.String(),
+		Name:        event.Name,
+		Venue:       (*string)(nil),
+		StartTime:   (*time.Time)(nil),
+		Capacity:    event.Capacity,
+		BookedCount: event.BookedCount,
+		Metadata:    event.Metadata,
+		CreatedAt:   event.CreatedAt.Time,
+		UpdatedAt:   event.UpdatedAt.Time,
+	}
+	if event.Venue.Valid {
+		response.Venue = &event.Venue.String
+	}
+	if event.StartTime.Valid {
+		response.StartTime = &event.StartTime.Time
 	}
 
 	c.JSON(http.StatusOK, response)

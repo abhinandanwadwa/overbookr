@@ -177,16 +177,11 @@ func (h *UsersHandler) Login(c *gin.Context) {
 		return
 	}
 
-	// generate JWT; GetUserByEmail currently does not return role in your SQL,
-	// so use default "user" for the claim. If you add role to GetUserByEmail select,
-	// replace this with user.Role.
-	role := user.Role
-
 	expiration := time.Now().Add(72 * time.Hour)
 
 	claims := jwt.MapClaims{
 		"sub":  user.ID.String(),
-		"role": role,
+		"role": user.Role,
 		"iat":  time.Now().Unix(),
 		"exp":  expiration.Unix(),
 	}
@@ -204,7 +199,7 @@ func (h *UsersHandler) Login(c *gin.Context) {
 		ID:        user.ID.String(),
 		Name:      user.Name,
 		Email:     user.Email,
-		Role:      role,
+		Role:      user.Role,
 		Token:     signedToken,
 		CreatedAt: user.CreatedAt.Time.String(),
 		UpdatedAt: user.UpdatedAt.Time.String(),
