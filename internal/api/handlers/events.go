@@ -97,3 +97,40 @@ func (h *EventsHandler) CreateEvent(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, response)
 }
+
+func (h *EventsHandler) GetEvents(c *gin.Context) {
+	events, err := h.db.GetAllEvents(context.Background())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to fetch events",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	var response []EventResponse
+	for _, event := range events {
+		venue := (*string)(nil)
+		if event.Venue.Valid {
+			venue = &event.Venue.String
+		}
+		startTime := (*time.Time)(nil)
+		if event.StartTime.Valid {
+			startTime = &event.StartTime.Time
+		}
+
+		response = append(response, EventResponse{
+			ID:          event.ID.String(),
+			Name:        event.Name,
+			Venue:       venue,
+			StartTime:   startTime,
+			Capacity:    event.Capacity,
+			BookedCount: event.BookedCount,
+			Metadata:    event.Metadata,
+			CreatedAt:   event.CreatedAt.Time,
+			UpdatedAt:   event.UpdatedAt.Time,
+		})
+	}
+
+	c.JSON(http.StatusOK, response)
+}

@@ -39,6 +39,7 @@ type Seat struct {
 	Status        string
 	BookingID     pgtype.UUID
 	HoldExpiresAt pgtype.Timestamptz
+	HoldToken     pgtype.Text
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
 }
@@ -59,6 +60,7 @@ type User struct {
 	Name      string
 	Email     string
 	Password  string
+	Role      string
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
 }
