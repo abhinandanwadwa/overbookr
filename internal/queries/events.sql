@@ -1,5 +1,5 @@
 -- name: GetAllEvents :many
-SELECT * FROM events;
+SELECT * FROM events ORDER BY start_time LIMIT $1 OFFSET $2;
 
 -- name: GetEventByID :one
 SELECT * FROM events WHERE id = $1;

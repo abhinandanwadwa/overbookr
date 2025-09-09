@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/abhinandanwadwa/overbookr/internal/db"
@@ -42,6 +43,7 @@ type EventResponse struct {
 	StartTime   *time.Time `json:"start_time"`
 	Capacity    int32      `json:"capacity"`
 	BookedCount int32      `json:"booked_count"`
+	Available   int32      `json:"available"`
 	Metadata    []byte     `json:"metadata"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
@@ -100,7 +102,41 @@ func (h *EventsHandler) CreateEvent(c *gin.Context) {
 }
 
 func (h *EventsHandler) GetEvents(c *gin.Context) {
-	events, err := h.db.GetAllEvents(context.Background())
+	// Defaults
+	const (
+		defaultLimit  = 20
+		defaultOffset = 0
+		maxLimit      = 100
+	)
+
+	// Parse query params
+	limitStr := c.DefaultQuery("limit", strconv.Itoa(defaultLimit))
+	offsetStr := c.DefaultQuery("offset", strconv.Itoa(defaultOffset))
+
+	limit64, err := strconv.ParseInt(limitStr, 10, 32)
+	if err != nil || limit64 <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid 'limit' query parameter",
+			"details": "limit must be a positive integer",
+		})
+		return
+	}
+	offset64, err := strconv.ParseInt(offsetStr, 10, 32)
+	if err != nil || offset64 < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid 'offset' query parameter",
+			"details": "offset must be a non-negative integer",
+		})
+		return
+	}
+
+	// Enforce max limit
+	if limit64 > maxLimit {
+		limit64 = maxLimit
+	}
+
+	// Call the sqlc-generated method
+	events, err := h.db.GetAllEvents(context.Background(), db.GetAllEventsParams{Limit: int32(limit64), Offset: int32(offset64)})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to fetch events",
@@ -127,6 +163,7 @@ func (h *EventsHandler) GetEvents(c *gin.Context) {
 			StartTime:   startTime,
 			Capacity:    event.Capacity,
 			BookedCount: event.BookedCount,
+			Available:   event.Capacity - event.BookedCount,
 			Metadata:    event.Metadata,
 			CreatedAt:   event.CreatedAt.Time,
 			UpdatedAt:   event.UpdatedAt.Time,
@@ -171,6 +208,7 @@ func (h *EventsHandler) GetEventByID(c *gin.Context) {
 		StartTime:   (*time.Time)(nil),
 		Capacity:    event.Capacity,
 		BookedCount: event.BookedCount,
+		Available:   event.Capacity - event.BookedCount,
 		Metadata:    event.Metadata,
 		CreatedAt:   event.CreatedAt.Time,
 		UpdatedAt:   event.UpdatedAt.Time,
