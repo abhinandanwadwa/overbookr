@@ -4,11 +4,10 @@ FROM bookings
 WHERE event_id = $1
     AND idempotency_key = $2;
 
--- name: GetSeatsForBookingForUpdate :many
-SELECT id, seat_no, status, hold_token
+-- name: GetSeatsForBookingByIDs :many
+SELECT id, status, hold_token
 FROM seats
-WHERE event_id = $1
-    AND seat_no = ANY($2::text[])
+WHERE id = ANY($1::uuid[])
 ORDER BY id
 FOR UPDATE;
 
@@ -40,9 +39,6 @@ SELECT id, hold_token, event_id, user_id, expires_at, status
 FROM seat_holds
 WHERE hold_token = $1
 FOR UPDATE;
-
-
-
 
 -- name: GetBookingsByUser :many
 SELECT id, event_id, user_id, seats, seat_ids, status, idempotency_key, created_at, updated_at

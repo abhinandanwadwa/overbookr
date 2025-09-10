@@ -168,42 +168,30 @@ func (q *Queries) GetSeatNosByIds(ctx context.Context, dollar_1 []pgtype.UUID) (
 	return items, nil
 }
 
-const getSeatsForBookingForUpdate = `-- name: GetSeatsForBookingForUpdate :many
-SELECT id, seat_no, status, hold_token
+const getSeatsForBookingByIDs = `-- name: GetSeatsForBookingByIDs :many
+SELECT id, status, hold_token
 FROM seats
-WHERE event_id = $1
-    AND seat_no = ANY($2::text[])
+WHERE id = ANY($1::uuid[])
 ORDER BY id
 FOR UPDATE
 `
 
-type GetSeatsForBookingForUpdateParams struct {
-	EventID pgtype.UUID
-	Column2 []string
-}
-
-type GetSeatsForBookingForUpdateRow struct {
+type GetSeatsForBookingByIDsRow struct {
 	ID        pgtype.UUID
-	SeatNo    string
 	Status    string
 	HoldToken pgtype.Text
 }
 
-func (q *Queries) GetSeatsForBookingForUpdate(ctx context.Context, arg GetSeatsForBookingForUpdateParams) ([]GetSeatsForBookingForUpdateRow, error) {
-	rows, err := q.db.Query(ctx, getSeatsForBookingForUpdate, arg.EventID, arg.Column2)
+func (q *Queries) GetSeatsForBookingByIDs(ctx context.Context, dollar_1 []pgtype.UUID) ([]GetSeatsForBookingByIDsRow, error) {
+	rows, err := q.db.Query(ctx, getSeatsForBookingByIDs, dollar_1)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []GetSeatsForBookingForUpdateRow
+	var items []GetSeatsForBookingByIDsRow
 	for rows.Next() {
-		var i GetSeatsForBookingForUpdateRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.SeatNo,
-			&i.Status,
-			&i.HoldToken,
-		); err != nil {
+		var i GetSeatsForBookingByIDsRow
+		if err := rows.Scan(&i.ID, &i.Status, &i.HoldToken); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

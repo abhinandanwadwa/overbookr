@@ -19,31 +19,27 @@ type BookingsHandler struct {
 }
 
 type CreateBookingRequest struct {
-	EventID   string   `json:"event_id" binding:"required,uuid"`
-	SeatNos   []string `json:"seat_nos" binding:"required,min=1"`
-	HoldToken *string  `json:"hold_token,omitempty"`
+	EventID   string `json:"event_id" binding:"required,uuid"`
+	HoldToken string `json:"hold_token" binding:"required"`
 }
 
 type CreateBookingResponse struct {
-	ID        string    `json:"id"`
-	EventID   string    `json:"event_id"`
-	Seats     []string  `json:"seat_nos"`
-	CreatedAt time.Time `json:"created_at"`
+	ID          string    `json:"id"`
+	EventID     string    `json:"event_id"`
+	SeatNumbers []string  `json:"seat_numbers"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
-// BookingResponse is the shape returned to clients for bookings.
 type BookingResponse struct {
-	ID        string    `json:"id"`
-	EventID   string    `json:"event_id"`
-	SeatNos   []string  `json:"seat_nos"`
-	SeatIds   []string  `json:"seat_ids,omitempty"` // optional, stringified UUIDs
-	SeatsCnt  int32     `json:"seats_count"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          string    `json:"id"`
+	EventID     string    `json:"event_id"`
+	SeatsCnt    int32     `json:"seats_count"`
+	SeatNumbers []string  `json:"seat_numbers"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-// Variables for retries
 const (
 	createBookingMaxRetries = 3
 	initialBackoff          = 100 * time.Millisecond
@@ -59,32 +55,26 @@ func NewBookingsHandler(dbconn *pgx.Conn) *BookingsHandler {
 func SimpleValidateHold(ctx context.Context, q *db.Queries, token string, eventID uuid.UUID, userParam pgtype.UUID, userRole string) (int, string, bool) {
 	hold, err := q.GetSeatHoldForUpdateByToken(ctx, token)
 	if err != nil {
-		// not found -> 404
 		return http.StatusNotFound, "hold token not found", false
 	}
 
-	// must be active
 	if hold.Status != "active" {
 		return http.StatusConflict, "hold not active", false
 	}
 
-	// check expiry if set
 	if hold.ExpiresAt.Valid && hold.ExpiresAt.Time.Before(time.Now()) {
 		return http.StatusConflict, "hold expired", false
 	}
 
-	// check event match if present
 	if hold.EventID.Valid && hold.EventID.Bytes != eventID {
 		return http.StatusConflict, "hold belongs to a different event", false
 	}
 
-	// ownership: require hold.user_id == current user unless admin
 	if hold.UserID.Valid {
 		if !userParam.Valid || hold.UserID.Bytes != userParam.Bytes {
 			return http.StatusForbidden, "hold token owned by another user", false
 		}
 	} else {
-		// no owner on hold -> be conservative: require admin to proceed
 		if userRole == "admin" {
 			return 0, "", true
 		}
@@ -95,7 +85,6 @@ func SimpleValidateHold(ctx context.Context, q *db.Queries, token string, eventI
 }
 
 func (h *BookingsHandler) CreateBooking(c *gin.Context) {
-	// Fetch Idempotency header
 	idempotencyKey := c.GetHeader("Idempotency-Key")
 	if idempotencyKey == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
@@ -108,33 +97,13 @@ func (h *BookingsHandler) CreateBooking(c *gin.Context) {
 		return
 	}
 
-	// parse event id
 	eid, err := uuid.Parse(req.EventID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid event_id", "details": err.Error()})
 		return
 	}
 
-	// dedupe & sanitize seat nos
-	seatMap := make(map[string]struct{}, len(req.SeatNos))
-	seatNos := make([]string, 0, len(req.SeatNos))
-	for _, s := range req.SeatNos {
-		if s == "" {
-			continue
-		}
-		if _, ok := seatMap[s]; !ok {
-			seatMap[s] = struct{}{}
-			seatNos = append(seatNos, s)
-		}
-	}
-	if len(seatNos) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "seat_nos must contain at least one seat"})
-		return
-	}
-
 	ctx := context.Background()
-
-	// Before actually performing the booking, return existing booking for same event+idempotency key (if any)
 	eventParam := pgtype.UUID{Bytes: eid, Valid: true}
 	idempotencyParam := pgtype.Text{String: idempotencyKey, Valid: true}
 
@@ -143,78 +112,29 @@ func (h *BookingsHandler) CreateBooking(c *gin.Context) {
 		IdempotencyKey: idempotencyParam,
 	})
 	if err == nil && existing.ID.Bytes != uuid.Nil {
-		// Build plain []uuid.UUID from existing.SeatIds (which are pgtype.UUID)
-		bookedIDs := make([]uuid.UUID, 0, len(existing.SeatIds))
-		for _, pgid := range existing.SeatIds {
-			if pgid.Valid {
-				bookedIDs = append(bookedIDs, pgid.Bytes)
-			}
-		}
-
-		// Query seat_no for those ids
-		rows, qerr := h.DB.Query(ctx, `SELECT seat_no FROM seats WHERE id = ANY($1::uuid[])`, bookedIDs)
-		if qerr != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load existing booking seats", "details": qerr.Error()})
+		seatNumbers, serr := h.db.GetSeatNosByIds(ctx, existing.SeatIds)
+		if serr != nil {
+			c.JSON(http.StatusConflict, gin.H{
+				"error":      "booking already exists for this idempotency key",
+				"details":    "please use a new idempotency key if you want to create a new booking",
+				"booking_id": existing.ID.String(),
+			})
 			return
 		}
-		defer rows.Close()
-
-		bookedSeatNos := make([]string, 0, len(bookedIDs))
-		for rows.Next() {
-			var sn string
-			if err := rows.Scan(&sn); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read booked seat rows", "details": err.Error()})
-				return
-			}
-			bookedSeatNos = append(bookedSeatNos, sn)
-		}
-
-		// Compare sets (order-insensitive). Normalize requested seatNos (dedupe) first.
-		reqSet := make(map[string]struct{}, len(req.SeatNos))
-		for _, s := range req.SeatNos {
-			reqSet[s] = struct{}{}
-		}
-		bookedSet := make(map[string]struct{}, len(bookedSeatNos))
-		for _, s := range bookedSeatNos {
-			bookedSet[s] = struct{}{}
-		}
-
-		// If sets equal => idempotent retry of same request -> return existing booking
-		if len(reqSet) == len(bookedSet) {
-			same := true
-			for s := range reqSet {
-				if _, ok := bookedSet[s]; !ok {
-					same = false
-					break
-				}
-			}
-			if same {
-				resp := CreateBookingResponse{
-					ID:        existing.ID.String(),
-					EventID:   existing.EventID.String(),
-					Seats:     bookedSeatNos, // return canonical booked seats
-					CreatedAt: existing.CreatedAt.Time,
-				}
-				c.JSON(http.StatusOK, resp)
-				return
-			}
-		}
-
-		// Otherwise payload differs -> idempotency collision
 		c.JSON(http.StatusConflict, gin.H{
-			"error":   "idempotency key conflict: existing booking was created with different seats",
-			"booking": map[string]interface{}{"id": existing.ID.String(), "seat_nos": bookedSeatNos},
+			"error":        "booking already exists for this idempotency key",
+			"details":      "please use a new idempotency key if you want to create a new booking",
+			"booking_id":   existing.ID.String(),
+			"seat_numbers": seatNumbers,
 		})
 		return
 	}
-	// if error is pgx.ErrNoRows (or similar), continue; if other error, fail
-	// sqlc may return pgx.ErrNoRows or a zero-value; treat any non-nil error that's not a no-rows as a server error
+
 	if err != nil && err != pgx.ErrNoRows {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "pre-check failed", "details": err.Error()})
 		return
 	}
 
-	// Get authenticated user id if available (auth middleware should set "user_id")
 	var userIDParam pgtype.UUID
 	if uidVal, ok := c.Get("user_id"); ok {
 		switch v := uidVal.(type) {
@@ -227,7 +147,6 @@ func (h *BookingsHandler) CreateBooking(c *gin.Context) {
 		}
 	}
 
-	// get current user role (set by auth middleware); default to "user" if not present
 	var currentUserRole string
 	if rv, ok := c.Get("user_role"); ok {
 		switch r := rv.(type) {
@@ -236,25 +155,47 @@ func (h *BookingsHandler) CreateBooking(c *gin.Context) {
 		case []byte:
 			currentUserRole = string(r)
 		default:
-			// leave default empty or set to "user"
 			currentUserRole = "user"
 		}
 	} else {
-		// no role in context — treat as regular user (or set "" if you prefer)
 		currentUserRole = "user"
 	}
 
-	// Retry loop for serialization / deadlock errors
+	if status, msg, ok := SimpleValidateHold(ctx, h.db, req.HoldToken, eid, userIDParam, currentUserRole); !ok {
+		c.JSON(status, gin.H{"error": msg})
+		return
+	}
+
+	var seatIDs []pgtype.UUID
+	rows, err := h.DB.Query(ctx, `SELECT id FROM seats WHERE hold_token = $1 AND event_id = $2 ORDER BY id`, req.HoldToken, eid)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get seats from hold", "details": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var seatID pgtype.UUID
+		if err := rows.Scan(&seatID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to scan seat ID", "details": err.Error()})
+			return
+		}
+		seatIDs = append(seatIDs, seatID)
+	}
+
+	if len(seatIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no seats found for the provided hold token"})
+		return
+	}
+
 	backoff := initialBackoff
 	for attempt := 0; attempt < createBookingMaxRetries; attempt++ {
-		// Begin transaction
 		tx, err := h.DB.Begin(ctx)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start transaction", "details": err.Error()})
 			return
 		}
 
-		// ensure rollback if anything fails in this attempt
 		rolledBack := false
 		rollbackIfNeeded := func() {
 			if !rolledBack {
@@ -263,26 +204,19 @@ func (h *BookingsHandler) CreateBooking(c *gin.Context) {
 			}
 		}
 
-		// create sqlc queries bound to tx
 		q := db.New(tx)
 
-		// minimal hold validation (if client supplied hold token)
-		if req.HoldToken != nil {
-			if status, msg, ok := SimpleValidateHold(ctx, q, *req.HoldToken, eid, userIDParam, currentUserRole); !ok {
-				rollbackIfNeeded()
-				c.JSON(status, gin.H{"error": msg})
-				return
-			}
+		if status, msg, ok := SimpleValidateHold(ctx, q, req.HoldToken, eid, userIDParam, currentUserRole); !ok {
+			rollbackIfNeeded()
+			c.JSON(status, gin.H{"error": msg})
+			return
 		}
 
-		// 1) Lock requested seats FOR UPDATE (ordered by id)
-		seats, err := q.GetSeatsForBookingForUpdate(ctx, db.GetSeatsForBookingForUpdateParams{EventID: eventParam, Column2: seatNos})
+		seats, err := q.GetSeatsForBookingByIDs(ctx, seatIDs)
 		if err != nil {
 			rollbackIfNeeded()
-			// check serialization/locking errors - retry if needed
 			if pgErr, ok := err.(*pgconn.PgError); ok {
 				if pgErr.Code == "40001" || pgErr.Code == "40P01" {
-					// serialization_failure or deadlock_detected -> retry
 					time.Sleep(backoff)
 					backoff *= 2
 					continue
@@ -292,76 +226,32 @@ func (h *BookingsHandler) CreateBooking(c *gin.Context) {
 			return
 		}
 
-		// Validate we found all seats
-		if len(seats) != len(seatNos) {
-			// compute missing seats
-			found := map[string]struct{}{}
-			for _, s := range seats {
-				found[s.SeatNo] = struct{}{}
-			}
-			missing := []string{}
-			for _, sn := range seatNos {
-				if _, ok := found[sn]; !ok {
-					missing = append(missing, sn)
-				}
-			}
+		if len(seats) != len(seatIDs) {
 			rollbackIfNeeded()
-			c.JSON(http.StatusNotFound, gin.H{"error": "some seats not found for this event", "missing": missing})
+			c.JSON(http.StatusConflict, gin.H{"error": "some seats no longer available"})
 			return
 		}
 
-		// Validate statuses: must be:
-		// - held AND must match provided hold_token
 		for _, s := range seats {
-			switch s.Status {
-			case "available":
-				if req.HoldToken != nil {
-					// if client provided a hold_token, they can't mix in random available seats
-					rollbackIfNeeded()
-					c.JSON(http.StatusConflict, gin.H{
-						"error":   "cannot book seats outside the provided hold",
-						"seat_no": s.SeatNo,
-					})
-					return
-				}
-			case "held":
-				if req.HoldToken == nil {
-					rollbackIfNeeded()
-					c.JSON(http.StatusConflict, gin.H{
-						"error":   "seat is held, hold_token required",
-						"seat_no": s.SeatNo,
-					})
-					return
-				}
-				if !s.HoldToken.Valid || s.HoldToken.String != *req.HoldToken {
-					rollbackIfNeeded()
-					c.JSON(http.StatusConflict, gin.H{
-						"error":   "seat held by another hold_token",
-						"seat_no": s.SeatNo,
-					})
-					return
-				}
-			default:
+			if s.Status != "held" {
 				rollbackIfNeeded()
 				c.JSON(http.StatusConflict, gin.H{
-					"error":   "seat not available for booking",
-					"seat_no": s.SeatNo,
-					"status":  s.Status,
+					"error":  "seat is not held",
+					"status": s.Status,
+				})
+				return
+			}
+			if !s.HoldToken.Valid || s.HoldToken.String != req.HoldToken {
+				rollbackIfNeeded()
+				c.JSON(http.StatusConflict, gin.H{
+					"error": "seat held by different hold token",
 				})
 				return
 			}
 		}
 
-		// Prepare seat IDs as []pgtype.UUID (matches sqlc pgtype usage)
-		seatIDs := make([]pgtype.UUID, 0, len(seats))
-		for _, s := range seats {
-			seatIDs = append(seatIDs, s.ID)
-		}
-
-		// 2) Insert booking row (idempotency key included)
-		// convert seats count
 		seatsCount := int32(len(seatIDs))
-		status := "active" // or 'confirmed' depending on your semantics
+		status := "active"
 
 		bookingRow, err := q.InsertBooking(ctx,
 			db.InsertBookingParams{
@@ -375,7 +265,6 @@ func (h *BookingsHandler) CreateBooking(c *gin.Context) {
 		)
 		if err != nil {
 			rollbackIfNeeded()
-			// retry on serialization/deadlock
 			if pgErr, ok := err.(*pgconn.PgError); ok {
 				if pgErr.Code == "40001" || pgErr.Code == "40P01" {
 					time.Sleep(backoff)
@@ -387,7 +276,6 @@ func (h *BookingsHandler) CreateBooking(c *gin.Context) {
 			return
 		}
 
-		// 3) Update seats to booked
 		if err := q.UpdateSeatsToBooked(ctx, db.UpdateSeatsToBookedParams{BookingID: bookingRow.ID, Column2: seatIDs}); err != nil {
 			rollbackIfNeeded()
 			if pgErr, ok := err.(*pgconn.PgError); ok {
@@ -401,7 +289,6 @@ func (h *BookingsHandler) CreateBooking(c *gin.Context) {
 			return
 		}
 
-		// 4) Update events booked_count
 		if err := q.UpdateEventBookedCount(ctx, db.UpdateEventBookedCountParams{BookedCount: seatsCount, ID: eventParam}); err != nil {
 			rollbackIfNeeded()
 			if pgErr, ok := err.(*pgconn.PgError); ok {
@@ -415,32 +302,25 @@ func (h *BookingsHandler) CreateBooking(c *gin.Context) {
 			return
 		}
 
-		// 5) If a hold_token was used, mark that seat_hold as converted
-		if req.HoldToken != nil {
-			if err := q.ConvertSeatHoldToConverted(ctx, *req.HoldToken); err != nil {
-				// Non-fatal? We treat failure as an error that rolls back
-				rollbackIfNeeded()
-				if pgErr, ok := err.(*pgconn.PgError); ok {
-					if pgErr.Code == "40001" || pgErr.Code == "40P01" {
-						time.Sleep(backoff)
-						backoff *= 2
-						continue
-					}
+		if err := q.ConvertSeatHoldToConverted(ctx, req.HoldToken); err != nil {
+			rollbackIfNeeded()
+			if pgErr, ok := err.(*pgconn.PgError); ok {
+				if pgErr.Code == "40001" || pgErr.Code == "40P01" {
+					time.Sleep(backoff)
+					backoff *= 2
+					continue
 				}
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update seat_hold status", "details": err.Error()})
-				return
 			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update seat_hold status", "details": err.Error()})
+			return
 		}
 
-		// Commit
 		if err := tx.Commit(ctx); err != nil {
-			// retry on serialization failure / deadlock
 			_ = tx.Rollback(ctx)
 			if pgErr, ok := err.(*pgconn.PgError); ok {
 				if pgErr.Code == "40001" || pgErr.Code == "40P01" {
 					time.Sleep(backoff)
 					backoff *= 2
-					// continue to next attempt
 					continue
 				}
 			}
@@ -448,27 +328,28 @@ func (h *BookingsHandler) CreateBooking(c *gin.Context) {
 			return
 		}
 
-		// Success -> return booking id/details (201)
+		seatNumbers, serr := h.db.GetSeatNosByIds(ctx, bookingRow.SeatIds)
+		if serr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get seat numbers", "details": serr.Error()})
+			return
+		}
+
 		resp := CreateBookingResponse{
-			ID:        bookingRow.ID.String(),
-			EventID:   bookingRow.EventID.String(),
-			Seats:     seatNos,
-			CreatedAt: bookingRow.CreatedAt.Time,
+			ID:          bookingRow.ID.String(),
+			EventID:     bookingRow.EventID.String(),
+			SeatNumbers: seatNumbers,
+			CreatedAt:   bookingRow.CreatedAt.Time,
 		}
 		c.JSON(http.StatusCreated, resp)
 		return
 	}
 
-	// if we've exhausted retries
 	c.JSON(http.StatusServiceUnavailable, gin.H{"error": "could not complete booking due to concurrent conflicts; please retry"})
 }
 
-// GET /bookings/me  -> GetMyBookings
-// Returns all bookings that belong to the authenticated user (past + present).
 func (h *BookingsHandler) GetMyBookings(c *gin.Context) {
 	ctx := context.Background()
 
-	// get authenticated user id (auth middleware must set "user_id")
 	var uid uuid.UUID
 	if v, ok := c.Get("user_id"); ok {
 		switch t := v.(type) {
@@ -490,7 +371,6 @@ func (h *BookingsHandler) GetMyBookings(c *gin.Context) {
 		return
 	}
 
-	// Call sqlc-generated query: GetBookingsByUser(ctx, pgtype.UUID{Bytes: uid, Valid:true})
 	userParam := pgtype.UUID{Bytes: uid, Valid: true}
 	bookings, err := h.db.GetBookingsByUser(ctx, userParam)
 	if err != nil {
@@ -500,46 +380,26 @@ func (h *BookingsHandler) GetMyBookings(c *gin.Context) {
 
 	out := make([]BookingResponse, 0, len(bookings))
 	for _, b := range bookings {
-		// build seatIds slice for GetSeatNosByIds query and response
-		pgIDs := make([]pgtype.UUID, 0, len(b.SeatIds))
-		seatIDStrs := make([]string, 0, len(b.SeatIds))
-		for _, pgid := range b.SeatIds {
-			pgIDs = append(pgIDs, pgid)
-			if pgid.Valid {
-				seatIDStrs = append(seatIDStrs, pgid.String())
-			}
-		}
-
-		// fetch seat numbers for these ids using the GetSeatNosByIds query
-		seatNos := []string{}
-		if len(pgIDs) > 0 {
-			rows, err := h.db.GetSeatNosByIds(ctx, pgIDs)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load seat numbers", "details": err.Error()})
-				return
-			}
-			// for _, s := range rows {
-			// 	seatNos = append(seatNos, s)
-			// }
-			seatNos = append(seatNos, rows...)
+		seatNumbers, err := h.db.GetSeatNosByIds(ctx, b.SeatIds)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get seat numbers", "details": err.Error()})
+			return
 		}
 
 		out = append(out, BookingResponse{
-			ID:        b.ID.String(),
-			EventID:   b.EventID.String(),
-			SeatNos:   seatNos,
-			SeatIds:   seatIDStrs,
-			SeatsCnt:  b.Seats,
-			Status:    b.Status,
-			CreatedAt: b.CreatedAt.Time,
-			UpdatedAt: b.UpdatedAt.Time,
+			ID:          b.ID.String(),
+			EventID:     b.EventID.String(),
+			SeatsCnt:    b.Seats,
+			SeatNumbers: seatNumbers,
+			Status:      b.Status,
+			CreatedAt:   b.CreatedAt.Time,
+			UpdatedAt:   b.UpdatedAt.Time,
 		})
 	}
 
 	c.JSON(http.StatusOK, out)
 }
 
-// GET /bookings/:id -> GetBookingByID (only owner can view)
 func (h *BookingsHandler) GetBookingByID(c *gin.Context) {
 	ctx := context.Background()
 	bookingIDStr := c.Param("id")
@@ -549,15 +409,12 @@ func (h *BookingsHandler) GetBookingByID(c *gin.Context) {
 		return
 	}
 
-	// fetch the booking
 	b, err := h.db.GetBookingByID(ctx, pgtype.UUID{Bytes: bookingID, Valid: true})
 	if err != nil {
-		// not found or other
 		c.JSON(http.StatusNotFound, gin.H{"error": "booking not found", "details": err.Error()})
 		return
 	}
 
-	// get authenticated user id
 	var uid uuid.UUID
 	if v, ok := c.Get("user_id"); ok {
 		switch t := v.(type) {
@@ -579,41 +436,25 @@ func (h *BookingsHandler) GetBookingByID(c *gin.Context) {
 		return
 	}
 
-	// enforce owner-only visibility
 	if !b.UserID.Valid || b.UserID.Bytes != uid {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden: only booking owner may view this booking"})
 		return
 	}
 
-	// resolve seat nos
-	pgIDs := make([]pgtype.UUID, 0, len(b.SeatIds))
-	seatIDStrs := make([]string, 0, len(b.SeatIds))
-	for _, pgid := range b.SeatIds {
-		pgIDs = append(pgIDs, pgid)
-		if pgid.Valid {
-			seatIDStrs = append(seatIDStrs, pgid.String())
-		}
-	}
-
-	seatNos := []string{}
-	if len(pgIDs) > 0 {
-		rows, err := h.db.GetSeatNosByIds(ctx, pgIDs)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load seat numbers", "details": err.Error()})
-			return
-		}
-		seatNos = append(seatNos, rows...)
+	seatNumbers, err := h.db.GetSeatNosByIds(ctx, b.SeatIds)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get seat numbers", "details": err.Error()})
+		return
 	}
 
 	resp := BookingResponse{
-		ID:        b.ID.String(),
-		EventID:   b.EventID.String(),
-		SeatNos:   seatNos,
-		SeatIds:   seatIDStrs,
-		SeatsCnt:  b.Seats,
-		Status:    b.Status,
-		CreatedAt: b.CreatedAt.Time,
-		UpdatedAt: b.UpdatedAt.Time,
+		ID:          b.ID.String(),
+		EventID:     b.EventID.String(),
+		SeatsCnt:    b.Seats,
+		SeatNumbers: seatNumbers,
+		Status:      b.Status,
+		CreatedAt:   b.CreatedAt.Time,
+		UpdatedAt:   b.UpdatedAt.Time,
 	}
 	c.JSON(http.StatusOK, resp)
 }

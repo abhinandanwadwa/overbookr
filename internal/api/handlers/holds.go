@@ -26,7 +26,7 @@ type CreateHoldResponse struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-const defaultHoldTTLSeconds = 300 // 5 minutes
+const defaultHoldTTLSeconds = 300
 
 func NewHoldsHandler(dbconn *pgx.Conn) *HoldsHandler {
 	return &HoldsHandler{
@@ -41,14 +41,12 @@ func (h *HoldsHandler) CreateHold(c *gin.Context) {
 		return
 	}
 
-	// Parse event ID
 	eid, err := uuid.Parse(req.EventID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid event id", "details": err.Error()})
 		return
 	}
 
-	// dedupe seat nos from request to avoid duplicate checks
 	seatMap := make(map[string]struct{}, len(req.SeatNos))
 	seatNos := make([]string, 0, len(req.SeatNos))
 	for _, s := range req.SeatNos {
@@ -67,7 +65,6 @@ func (h *HoldsHandler) CreateHold(c *gin.Context) {
 
 	ctx := context.Background()
 
-	// Begin transaction here
 	tx, err := h.DB.Begin(ctx)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start transaction", "details": err.Error()})
@@ -77,7 +74,6 @@ func (h *HoldsHandler) CreateHold(c *gin.Context) {
 		_ = tx.Rollback(ctx)
 	}()
 
-	// Create a new queries instance using tx
 	q := db.New(tx)
 	eventParam := pgtype.UUID{Bytes: eid, Valid: true}
 
@@ -87,9 +83,7 @@ func (h *HoldsHandler) CreateHold(c *gin.Context) {
 		return
 	}
 
-	// Validate and check that all the requested seats are available
 	if len(seats) != len(seatNos) {
-		// Compute missing ones
 		found := map[string]struct{}{}
 		for _, s := range seats {
 			found[s.SeatNo] = struct{}{}
@@ -111,30 +105,26 @@ func (h *HoldsHandler) CreateHold(c *gin.Context) {
 		}
 	}
 
-	// If all seats are valid and available, create a hold now
 	ids := make([]pgtype.UUID, 0, len(seats))
 	for _, s := range seats {
 		ids = append(ids, s.ID)
 	}
 
-	// Prepare hold token and expiry
 	token := uuid.NewString()
 	expiresAt := time.Now().Add(time.Duration(defaultHoldTTLSeconds) * time.Second)
 
 	holdExpiresParam := pgtype.Timestamptz{Time: expiresAt, Valid: true}
 	holdTokenParam := pgtype.Text{String: token, Valid: true}
-	// Update the seats to be held
+
 	if err := q.UpdateSeatsToHeld(ctx, db.UpdateSeatsToHeldParams{
 		HoldExpiresAt: holdExpiresParam,
 		HoldToken:     holdTokenParam,
-		Column3:       ids, // ids is []pgtype.UUID (from change #1)
+		Column3:       ids,
 	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update seats to held", "details": err.Error()})
 		return
 	}
 
-	// Insert seat_hold via sqlc
-	// Get user id from context (set by auth middleware)
 	var userIDParam pgtype.UUID
 	if uidVal, ok := c.Get("user_id"); ok {
 		switch v := uidVal.(type) {
@@ -159,13 +149,11 @@ func (h *HoldsHandler) CreateHold(c *gin.Context) {
 		return
 	}
 
-	// commit transaction
 	if err := tx.Commit(ctx); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to commit", "details": err.Error()})
 		return
 	}
 
-	// return hold token + expiry
 	resp := CreateHoldResponse{
 		HoldToken: holdRow.HoldToken,
 		ExpiresAt: holdRow.ExpiresAt.Time,
