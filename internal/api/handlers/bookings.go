@@ -539,9 +539,7 @@ func (h *BookingsHandler) GetBookingByID(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load seat numbers", "details": err.Error()})
 			return
 		}
-		for _, s := range rows {
-			seatNos = append(seatNos, s)
-		}
+		seatNos = append(seatNos, rows...)
 	}
 
 	resp := BookingResponse{

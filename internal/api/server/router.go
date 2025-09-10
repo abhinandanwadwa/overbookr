@@ -60,5 +60,11 @@ func NewRouter(deps AppDeps) *gin.Engine {
 		bookings.DELETE("/:id", middleware.AuthMiddleware(), bookingsHandler.CancelBooking)
 	}
 
+	analyticsHandler := handlers.NewAnalyticsHandler(deps.DB)
+	analytics := router.Group("/analytics")
+	{
+		analytics.GET("/total_bookings", middleware.AuthMiddleware(), middleware.AdminMiddleware(), analyticsHandler.GetTotalBookingsAnalytics)
+	}
+
 	return router
 }
