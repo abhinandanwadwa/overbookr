@@ -21,15 +21,6 @@ func NewRouter(deps AppDeps) *gin.Engine {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	// Event routes
-	eventHandler := handlers.NewEventsHandler(deps.DB)
-	events := router.Group("/events")
-	{
-		events.POST("/", middleware.AuthMiddleware(), middleware.AdminMiddleware(), eventHandler.CreateEvent)
-		events.GET("/", eventHandler.GetEvents)
-		events.GET("/:id", eventHandler.GetEventByID)
-	}
-
 	// User routes
 	userHandler := handlers.NewUsersHandler(deps.DB)
 	users := router.Group("/users")
@@ -38,11 +29,31 @@ func NewRouter(deps AppDeps) *gin.Engine {
 		users.POST("/login", userHandler.Login)
 	}
 
-	seatsHandler := handlers.NewSeatsHandler(deps.DB)
-	seats := router.Group("/seats/event/:id")
+	// Event routes
+	eventHandler := handlers.NewEventsHandler(deps.DB)
+	events := router.Group("/events")
 	{
-		seats.GET("/", seatsHandler.GetSeats)
-		seats.POST("/", middleware.AuthMiddleware(), middleware.AdminMiddleware(), seatsHandler.BulkCreateSeats)
+		events.POST("/", middleware.AuthMiddleware(), middleware.AdminMiddleware(), eventHandler.CreateEvent)
+		events.GET("/", eventHandler.GetEvents)
+		events.GET("/:id", eventHandler.GetEventByID)
+
+		// Seats
+		events.GET("/:id/seats", eventHandler.GetSeats)
+		events.POST("/:id/seats", middleware.AuthMiddleware(), middleware.AdminMiddleware(), eventHandler.BulkCreateSeats)
+	}
+
+	holdsHandler := handlers.NewHoldsHandler(deps.DB)
+	holds := router.Group("/holds")
+	{
+		holds.POST("/", middleware.AuthMiddleware(), holdsHandler.CreateHold)
+	}
+
+	bookingsHandler := handlers.NewBookingsHandler(deps.DB)
+	bookings := router.Group("/bookings")
+	{
+		bookings.POST("/", middleware.AuthMiddleware(), bookingsHandler.CreateBooking)
+		// bookings.GET("/:id", middleware.AuthMiddleware(), bookingsHandler.GetBookingByID)
+		// bookings.GET("/", middleware.AuthMiddleware(), bookingsHandler.GetBookings)
 	}
 
 	return router

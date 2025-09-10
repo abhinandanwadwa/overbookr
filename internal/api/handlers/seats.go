@@ -24,17 +24,13 @@ type BulkCreateSeatsRequest struct {
 	SeatNos []string `json:"seat_nos" binding:"required,min=1"`
 }
 
-type SeatsHandler struct {
-	db *db.Queries
-}
-
-func NewSeatsHandler(dbconn *pgx.Conn) *SeatsHandler {
-	return &SeatsHandler{
+func NewSeatsHandler(dbconn *pgx.Conn) *EventsHandler {
+	return &EventsHandler{
 		db: db.New(dbconn),
 	}
 }
 
-func (h *SeatsHandler) GetSeats(c *gin.Context) {
+func (h *EventsHandler) GetSeats(c *gin.Context) {
 	id := c.Param("id")
 	uid, err := uuid.Parse(id)
 	if err != nil {
@@ -68,7 +64,7 @@ func (h *SeatsHandler) GetSeats(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-func (h *SeatsHandler) BulkCreateSeats(c *gin.Context) {
+func (h *EventsHandler) BulkCreateSeats(c *gin.Context) {
 	id := c.Param("id")
 	uid, err := uuid.Parse(id)
 	if err != nil {

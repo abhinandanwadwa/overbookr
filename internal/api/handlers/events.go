@@ -15,6 +15,7 @@ import (
 
 type EventsHandler struct {
 	db *db.Queries
+	DB *pgx.Conn
 }
 
 type CreateEventRequest struct {
@@ -52,6 +53,7 @@ type EventResponse struct {
 func NewEventsHandler(dbconn *pgx.Conn) *EventsHandler {
 	return &EventsHandler{
 		db: db.New(dbconn),
+		DB: dbconn,
 	}
 }
 
