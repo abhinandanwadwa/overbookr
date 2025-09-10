@@ -38,5 +38,12 @@ func NewRouter(deps AppDeps) *gin.Engine {
 		users.POST("/login", userHandler.Login)
 	}
 
+	seatsHandler := handlers.NewSeatsHandler(deps.DB)
+	seats := router.Group("/seats/event/:id")
+	{
+		seats.GET("/", seatsHandler.GetSeats)
+		seats.POST("/", middleware.AuthMiddleware(), middleware.AdminMiddleware(), seatsHandler.BulkCreateSeats)
+	}
+
 	return router
 }
