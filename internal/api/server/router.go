@@ -40,6 +40,9 @@ func NewRouter(deps AppDeps) *gin.Engine {
 		// Seats
 		events.GET("/:id/seats", eventHandler.GetSeats)
 		events.POST("/:id/seats", middleware.AuthMiddleware(), middleware.AdminMiddleware(), eventHandler.BulkCreateSeats)
+
+		// Waitlist
+		events.POST("/:id/waitlist", middleware.AuthMiddleware(), eventHandler.JoinWaitlist)
 	}
 
 	holdsHandler := handlers.NewHoldsHandler(deps.DB)

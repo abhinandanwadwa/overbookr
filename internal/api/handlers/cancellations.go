@@ -2,21 +2,23 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/abhinandanwadwa/overbookr/internal/db"
+	workers "github.com/abhinandanwadwa/overbookr/internal/worker"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// EnqueuePromoteEvent enqueues a background job to promote waitlist entries for an event.
-// Replace this with the actual job/queueing implementation.
-func EnqueuePromoteEvent(eventID uuid.UUID) {
-	// Example: push to Redis stream or publish to a queue.
-	// Implementation left as an exercise (depends on your infra).
-	_ = eventID
+func EnqueuePromoteEvent(conn *pgx.Conn, eventID uuid.UUID) {
+	promoterWorker := workers.NewWaitlistWorker(conn)
+
+	if err := promoterWorker.ProcessWaitlistForEvent(context.Background(), eventID); err != nil {
+		fmt.Printf("waitlist promotion failed for event %s: %v\n", eventID, err)
+	}
 }
 
 // CancelBookingHandler cancels a booking (owner or admin).
@@ -91,12 +93,6 @@ func (h *BookingsHandler) CancelBooking(c *gin.Context) {
 	}
 
 	// collect seat_ids from bookingRow.SeatIds (pgtype.UUID array)
-	// seatIDs := make([]pgtype.UUID, 0, len(bookingRow.SeatIds))
-	// for _, pgid := range bookingRow.SeatIds {
-	// 	seatIDs = append(seatIDs, pgid)
-	// }
-
-	// collect seat_ids from bookingRow.SeatIds (pgtype.UUID array)
 	seatIDs := make([]pgtype.UUID, 0, len(bookingRow.SeatIds))
 	seatIDs = append(seatIDs, bookingRow.SeatIds...)
 
@@ -114,7 +110,7 @@ func (h *BookingsHandler) CancelBooking(c *gin.Context) {
 			return
 		}
 		// enqueue promotion job after commit
-		go EnqueuePromoteEvent(bookingRow.EventID.Bytes)
+		go EnqueuePromoteEvent(h.DB, bookingRow.EventID.Bytes)
 		c.JSON(http.StatusOK, gin.H{"id": bookingID.String(), "status": "cancelled"})
 		return
 	}
@@ -145,7 +141,7 @@ func (h *BookingsHandler) CancelBooking(c *gin.Context) {
 	}
 
 	// After commit, enqueue promote job to process waitlist
-	go EnqueuePromoteEvent(bookingRow.EventID.Bytes)
+	go EnqueuePromoteEvent(h.DB, bookingRow.EventID.Bytes)
 
 	c.JSON(http.StatusOK, gin.H{
 		"id":     bookingID.String(),
