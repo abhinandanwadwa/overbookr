@@ -35,6 +35,12 @@ UPDATE seat_holds
 SET status = 'converted'
 WHERE hold_token = $1;
 
+-- name: GetSeatHoldForUpdateByToken :one
+SELECT id, hold_token, event_id, user_id, expires_at, status
+FROM seat_holds
+WHERE hold_token = $1
+FOR UPDATE;
+
 
 
 

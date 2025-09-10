@@ -11,6 +11,45 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getExpiredSeatHolds = `-- name: GetExpiredSeatHolds :many
+SELECT id, hold_token, event_id, seat_ids
+FROM seat_holds
+WHERE expires_at <= now() AND status = 'active'
+ORDER BY created_at
+`
+
+type GetExpiredSeatHoldsRow struct {
+	ID        pgtype.UUID
+	HoldToken string
+	EventID   pgtype.UUID
+	SeatIds   []pgtype.UUID
+}
+
+func (q *Queries) GetExpiredSeatHolds(ctx context.Context) ([]GetExpiredSeatHoldsRow, error) {
+	rows, err := q.db.Query(ctx, getExpiredSeatHolds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetExpiredSeatHoldsRow
+	for rows.Next() {
+		var i GetExpiredSeatHoldsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.HoldToken,
+			&i.EventID,
+			&i.SeatIds,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getSeatsForEventForUpdate = `-- name: GetSeatsForEventForUpdate :many
 SELECT id, seat_no, status
 FROM seats
@@ -82,6 +121,36 @@ func (q *Queries) InsertSeatHold(ctx context.Context, arg InsertSeatHoldParams) 
 	var i InsertSeatHoldRow
 	err := row.Scan(&i.ID, &i.HoldToken, &i.ExpiresAt)
 	return i, err
+}
+
+const markSeatHoldExpired = `-- name: MarkSeatHoldExpired :exec
+UPDATE seat_holds
+SET status = 'expired', updated_at = now()
+WHERE id = $1
+`
+
+func (q *Queries) MarkSeatHoldExpired(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markSeatHoldExpired, id)
+	return err
+}
+
+const updateSeatsToAvailableByHold = `-- name: UpdateSeatsToAvailableByHold :exec
+UPDATE seats
+SET status = 'available',
+    hold_expires_at = NULL,
+    hold_token = NULL,
+    updated_at = now()
+WHERE hold_token = $1 AND id = ANY($2::uuid[])
+`
+
+type UpdateSeatsToAvailableByHoldParams struct {
+	HoldToken pgtype.Text
+	Column2   []pgtype.UUID
+}
+
+func (q *Queries) UpdateSeatsToAvailableByHold(ctx context.Context, arg UpdateSeatsToAvailableByHoldParams) error {
+	_, err := q.db.Exec(ctx, updateSeatsToAvailableByHold, arg.HoldToken, arg.Column2)
+	return err
 }
 
 const updateSeatsToHeld = `-- name: UpdateSeatsToHeld :exec

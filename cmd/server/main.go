@@ -7,8 +7,9 @@ import (
 	"time"
 
 	"github.com/abhinandanwadwa/overbookr/internal/api/server"
-	workers "github.com/abhinandanwadwa/overbookr/internal/worker"
+	"github.com/abhinandanwadwa/overbookr/internal/workers"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 )
 
@@ -23,22 +24,35 @@ func main() {
 	}
 	DB_URI := os.Getenv("POSTGRESQL_URI")
 	PORT := os.Getenv("PORT")
+	if DB_URI == "" {
+		log.Fatal("POSTGRESQL_URI is required")
+	}
+
 	cfg := server.Config{
 		DB_URI: DB_URI,
 		PORT:   PORT,
 	}
 
+	// Create a connection pool for workers
+	pool, err := pgxpool.New(ctx, cfg.DB_URI)
+	if err != nil {
+		log.Fatalf("unable to create pgx pool: %v", err)
+	}
+	defer pool.Close()
+
 	// Connect to DB
-	conn, err := pgx.Connect(context.Background(), cfg.DB_URI)
+	conn, err := pgx.Connect(ctx, cfg.DB_URI)
 	if err != nil {
 		log.Fatal("Unable to connect to database:", err)
 		os.Exit(1)
 	}
-	defer conn.Close(ctx)
+	defer func() {
+		_ = conn.Close(ctx)
+	}()
 
 	// --- Workers setup ---
 	// Create worker instances bound to the same DB connection
-	holdExpiryWorker := workers.NewHoldExpiryWorker(conn)
+	holdExpiryWorker := workers.NewHoldExpiryWorker(pool)
 	reconcileWorker := workers.NewReconcileWorker(conn)
 
 	// 1) Start hold expiry loop (every 30s)
@@ -48,9 +62,10 @@ func main() {
 		for {
 			select {
 			case <-ctx.Done():
+				log.Println("hold expiry loop stopping")
 				return
 			case <-ticker.C:
-				if err := holdExpiryWorker.ExpireHolds(context.Background()); err != nil {
+				if err := holdExpiryWorker.ExpireHolds(ctx); err != nil {
 					log.Printf("hold expiry worker error: %v\n", err)
 				}
 			}

@@ -8,12 +8,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// WaitlistWorker provides worker methods for waitlist promotion
 type WaitlistWorker struct {
-	DBConn *pgx.Conn   // used for tx
-	DB     *db.Queries // plain queries
+	DBConn *pgx.Conn
+	Pool   *pgxpool.Pool
+	DB     *db.Queries
 }
 
 func NewWaitlistWorker(conn *pgx.Conn) *WaitlistWorker {
@@ -23,12 +24,30 @@ func NewWaitlistWorker(conn *pgx.Conn) *WaitlistWorker {
 	}
 }
 
-// ProcessWaitlistForEvent promotes waitlisted users if seats are available.
+func NewWaitlistWorkerFromPool(pool *pgxpool.Pool) *WaitlistWorker {
+	return &WaitlistWorker{
+		Pool: pool,
+		DB:   db.New(pool),
+	}
+}
+
 func (w *WaitlistWorker) ProcessWaitlistForEvent(ctx context.Context, eventID uuid.UUID) error {
 	eventParam := pgtype.UUID{Bytes: eventID, Valid: true}
 
-	// 1. Fetch waiting users
-	waiters, err := w.DB.GetWaitingListByEvent(ctx, eventParam)
+	var waiters []db.GetWaitingListByEventRow
+	var err error
+
+	if w.Pool != nil {
+		conn, aerr := w.Pool.Acquire(ctx)
+		if aerr != nil {
+			return fmt.Errorf("acquire conn: %w", aerr)
+		}
+		defer conn.Release()
+		q := db.New(conn.Conn())
+		waiters, err = q.GetWaitingListByEvent(ctx, eventParam)
+	} else {
+		waiters, err = w.DB.GetWaitingListByEvent(ctx, eventParam)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to load waitlist: %w", err)
 	}
@@ -39,11 +58,19 @@ func (w *WaitlistWorker) ProcessWaitlistForEvent(ctx context.Context, eventID uu
 	for _, candidate := range waiters {
 		n := int32(candidate.RequestedSeats)
 
-		// Begin short transaction
-		tx, err := w.DBConn.Begin(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to begin tx: %w", err)
+		var tx pgx.Tx
+		if w.Pool != nil {
+			tx, err = w.Pool.BeginTx(ctx, pgx.TxOptions{})
+			if err != nil {
+				return fmt.Errorf("failed to begin tx: %w", err)
+			}
+		} else {
+			tx, err = w.DBConn.Begin(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to begin tx: %w", err)
+			}
 		}
+
 		rolledBack := false
 		rollbackIfNeeded := func() {
 			if !rolledBack {
@@ -54,10 +81,12 @@ func (w *WaitlistWorker) ProcessWaitlistForEvent(ctx context.Context, eventID uu
 
 		qtx := db.New(tx)
 
-		// 2. Lock N available seats
 		seats, err := qtx.GetAvailableSeatsForEventForUpdate(ctx, db.GetAvailableSeatsForEventForUpdateParams{EventID: eventParam, Limit: n})
 		if err != nil || int32(len(seats)) < n {
 			rollbackIfNeeded()
+			if err != nil {
+				continue
+			}
 			continue
 		}
 
@@ -68,7 +97,6 @@ func (w *WaitlistWorker) ProcessWaitlistForEvent(ctx context.Context, eventID uu
 			seatNos = append(seatNos, s.SeatNo)
 		}
 
-		// 3. Insert booking
 		status := "active"
 		idempotencyKey := uuid.NewString()
 		bookingRow, err := qtx.InsertBooking(ctx,
@@ -85,33 +113,28 @@ func (w *WaitlistWorker) ProcessWaitlistForEvent(ctx context.Context, eventID uu
 			continue
 		}
 
-		// 4. Update seats to booked
 		if err := qtx.UpdateSeatsToBooked(ctx, db.UpdateSeatsToBookedParams{BookingID: bookingRow.ID, Column2: seatIDs}); err != nil {
 			rollbackIfNeeded()
 			continue
 		}
 
-		// 5. Update event booked_count
 		if err := qtx.UpdateEventBookedCount(ctx, db.UpdateEventBookedCountParams{BookedCount: int32(len(seatIDs)), ID: eventParam}); err != nil {
 			rollbackIfNeeded()
 			continue
 		}
 
-		// 6. Update waitlist row to promoted
 		if err := qtx.UpdateWaitlistStatus(ctx, db.UpdateWaitlistStatusParams{ID: candidate.ID, Status: "promoted"}); err != nil {
 			rollbackIfNeeded()
 			continue
 		}
 
-		// Commit
 		if err := tx.Commit(ctx); err != nil {
 			_ = tx.Rollback(ctx)
 			continue
 		}
 
-		// Notify user outside transaction
-		bookingId, err := uuid.Parse(bookingRow.ID.String())
-		if err == nil {
+		bookingId, perr := uuid.Parse(bookingRow.ID.String())
+		if perr == nil {
 			go NotifyUserPromoted(candidate.UserID, eventID, bookingId, seatNos)
 		}
 	}
@@ -119,10 +142,8 @@ func (w *WaitlistWorker) ProcessWaitlistForEvent(ctx context.Context, eventID uu
 	return nil
 }
 
-// Replace this with your real notifier (email, WhatsApp, push, etc.)
 func NotifyUserPromoted(userID pgtype.UUID, eventID, bookingID uuid.UUID, seats []string) {
 	if userID.Valid {
-		fmt.Printf("User %s promoted for event %s (booking %s), seats=%v\n",
-			userID.String(), eventID.String(), bookingID.String(), seats)
+		fmt.Printf("User %s promoted for event %s (booking %s), seats=%v\n", userID.String(), eventID.String(), bookingID.String(), seats)
 	}
 }

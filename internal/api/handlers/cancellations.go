@@ -6,7 +6,7 @@ import (
 	"net/http"
 
 	"github.com/abhinandanwadwa/overbookr/internal/db"
-	workers "github.com/abhinandanwadwa/overbookr/internal/worker"
+	"github.com/abhinandanwadwa/overbookr/internal/workers"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"

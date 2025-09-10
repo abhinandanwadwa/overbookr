@@ -56,6 +56,44 @@ func NewBookingsHandler(dbconn *pgx.Conn) *BookingsHandler {
 	}
 }
 
+func SimpleValidateHold(ctx context.Context, q *db.Queries, token string, eventID uuid.UUID, userParam pgtype.UUID, userRole string) (int, string, bool) {
+	hold, err := q.GetSeatHoldForUpdateByToken(ctx, token)
+	if err != nil {
+		// not found -> 404
+		return http.StatusNotFound, "hold token not found", false
+	}
+
+	// must be active
+	if hold.Status != "active" {
+		return http.StatusConflict, "hold not active", false
+	}
+
+	// check expiry if set
+	if hold.ExpiresAt.Valid && hold.ExpiresAt.Time.Before(time.Now()) {
+		return http.StatusConflict, "hold expired", false
+	}
+
+	// check event match if present
+	if hold.EventID.Valid && hold.EventID.Bytes != eventID {
+		return http.StatusConflict, "hold belongs to a different event", false
+	}
+
+	// ownership: require hold.user_id == current user unless admin
+	if hold.UserID.Valid {
+		if !userParam.Valid || hold.UserID.Bytes != userParam.Bytes {
+			return http.StatusForbidden, "hold token owned by another user", false
+		}
+	} else {
+		// no owner on hold -> be conservative: require admin to proceed
+		if userRole == "admin" {
+			return 0, "", true
+		}
+		return http.StatusForbidden, "hold token not claimable by this user", false
+	}
+
+	return 0, "", true
+}
+
 func (h *BookingsHandler) CreateBooking(c *gin.Context) {
 	// Fetch Idempotency header
 	idempotencyKey := c.GetHeader("Idempotency-Key")
@@ -188,7 +226,23 @@ func (h *BookingsHandler) CreateBooking(c *gin.Context) {
 			}
 		}
 	}
-	// if not set, userIDParam.Valid == false and sqlc/pgx will insert NULL
+
+	// get current user role (set by auth middleware); default to "user" if not present
+	var currentUserRole string
+	if rv, ok := c.Get("user_role"); ok {
+		switch r := rv.(type) {
+		case string:
+			currentUserRole = r
+		case []byte:
+			currentUserRole = string(r)
+		default:
+			// leave default empty or set to "user"
+			currentUserRole = "user"
+		}
+	} else {
+		// no role in context — treat as regular user (or set "" if you prefer)
+		currentUserRole = "user"
+	}
 
 	// Retry loop for serialization / deadlock errors
 	backoff := initialBackoff
@@ -211,6 +265,15 @@ func (h *BookingsHandler) CreateBooking(c *gin.Context) {
 
 		// create sqlc queries bound to tx
 		q := db.New(tx)
+
+		// minimal hold validation (if client supplied hold token)
+		if req.HoldToken != nil {
+			if status, msg, ok := SimpleValidateHold(ctx, q, *req.HoldToken, eid, userIDParam, currentUserRole); !ok {
+				rollbackIfNeeded()
+				c.JSON(status, gin.H{"error": msg})
+				return
+			}
+		}
 
 		// 1) Lock requested seats FOR UPDATE (ordered by id)
 		seats, err := q.GetSeatsForBookingForUpdate(ctx, db.GetSeatsForBookingForUpdateParams{EventID: eventParam, Column2: seatNos})

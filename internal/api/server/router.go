@@ -1,8 +1,11 @@
 package server
 
 import (
+	"time"
+
 	"github.com/abhinandanwadwa/overbookr/internal/api/handlers"
 	"github.com/abhinandanwadwa/overbookr/internal/api/middleware"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
@@ -15,6 +18,19 @@ func NewRouter(deps AppDeps) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(middleware.RequestLogger())
+
+	// Cors
+	router.Use(cors.New(cors.Config{
+		AllowAllOrigins:  true,
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "Idempotency-Key"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
+	}))
+
+	// Docs routes
+	RegisterDocsRoutes(router)
 
 	// Public routes
 	router.GET("/healthz", func(c *gin.Context) {

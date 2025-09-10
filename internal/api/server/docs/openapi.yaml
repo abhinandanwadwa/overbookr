@@ -6,8 +6,10 @@ info:
     Backend API for overbookr (seat-level bookings, holds, waitlist, workers).
     See docs/README for behavior details and concurrency semantics.
 servers:
-  - url: https://api.example.com
+  - url: https://overbookr-production.up.railway.app
     description: Production
+  - url: http://localhost:8080
+    description: Local development
 components:
   securitySchemes:
     BearerAuth:
@@ -30,11 +32,12 @@ components:
           type: string
     UserRegister:
       type: object
-      required: [name, email, password]
+      required: [name, email, password, role]
       properties:
         name: { type: string }
         email: { type: string, format: email }
         password: { type: string }
+        role: { type: string, enum: [user, admin] }
     UserLogin:
       type: object
       required: [email, password]

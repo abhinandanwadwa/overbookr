@@ -111,6 +111,36 @@ func (q *Queries) GetBookingsByUser(ctx context.Context, userID pgtype.UUID) ([]
 	return items, nil
 }
 
+const getSeatHoldForUpdateByToken = `-- name: GetSeatHoldForUpdateByToken :one
+SELECT id, hold_token, event_id, user_id, expires_at, status
+FROM seat_holds
+WHERE hold_token = $1
+FOR UPDATE
+`
+
+type GetSeatHoldForUpdateByTokenRow struct {
+	ID        pgtype.UUID
+	HoldToken string
+	EventID   pgtype.UUID
+	UserID    pgtype.UUID
+	ExpiresAt pgtype.Timestamptz
+	Status    string
+}
+
+func (q *Queries) GetSeatHoldForUpdateByToken(ctx context.Context, holdToken string) (GetSeatHoldForUpdateByTokenRow, error) {
+	row := q.db.QueryRow(ctx, getSeatHoldForUpdateByToken, holdToken)
+	var i GetSeatHoldForUpdateByTokenRow
+	err := row.Scan(
+		&i.ID,
+		&i.HoldToken,
+		&i.EventID,
+		&i.UserID,
+		&i.ExpiresAt,
+		&i.Status,
+	)
+	return i, err
+}
+
 const getSeatNosByIds = `-- name: GetSeatNosByIds :many
 SELECT seat_no
 FROM seats
