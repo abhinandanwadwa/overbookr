@@ -1,0 +1,365 @@
+openapi: 3.0.3
+info:
+  title: overbookr API
+  version: "1.0.0"
+  description: |
+    Backend API for overbookr (seat-level bookings, holds, waitlist, workers).
+    See docs/README for behavior details and concurrency semantics.
+servers:
+  - url: https://api.example.com
+    description: Production
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        details:
+          type: string
+    Health:
+      type: object
+      properties:
+        status:
+          type: string
+    UserRegister:
+      type: object
+      required: [name, email, password]
+      properties:
+        name: { type: string }
+        email: { type: string, format: email }
+        password: { type: string }
+    UserLogin:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+    AuthResponse:
+      type: object
+      properties:
+        token: { type: string }
+    Event:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        venue: { type: string, nullable: true }
+        start_time: { type: string, format: date-time, nullable: true }
+        capacity: { type: integer }
+        booked_count: { type: integer }
+        metadata: { type: object }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CreateEventReq:
+      type: object
+      required: [name, venue, start_time, capacity]
+      properties:
+        name: { type: string }
+        venue: { type: string }
+        start_time: { type: string, format: date-time }
+        capacity: { type: integer }
+        metadata: { type: object }
+    Seat:
+      type: object
+      properties:
+        seat_no: { type: string }
+        status: { type: string, enum: [available, held, booked, blocked] }
+        booking_id: { type: string, format: uuid, nullable: true }
+    BulkCreateSeatsReq:
+      type: object
+      required: [seat_nos]
+      properties:
+        seat_nos:
+          type: array
+          items: { type: string }
+    CreateHoldReq:
+      type: object
+      required: [event_id, seat_nos]
+      properties:
+        event_id: { type: string, format: uuid }
+        seat_nos:
+          type: array
+          items: { type: string }
+    CreateHoldResp:
+      type: object
+      properties:
+        hold_token: { type: string }
+        expires_at: { type: string, format: date-time }
+    CreateBookingReq:
+      type: object
+      required: [event_id, seat_nos]
+      properties:
+        event_id: { type: string, format: uuid }
+        seat_nos:
+          type: array
+          items: { type: string }
+        hold_token:
+          type: string
+          nullable: true
+    BookingSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        event_id: { type: string, format: uuid }
+        seat_nos:
+          type: array
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+    BookingResponse:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        event_id: { type: string, format: uuid }
+        seat_nos:
+          type: array
+          items: { type: string }
+        seats_count: { type: integer }
+        status: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    JoinWaitlistReq:
+      type: object
+      required: [requested_seats]
+      properties:
+        requested_seats: { type: integer }
+    JoinWaitlistResp:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        position: { type: integer }
+        created_at: { type: string, format: date-time }
+
+paths:
+  /healthz:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+
+  /users/register:
+    post:
+      summary: Register user
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: '#/components/schemas/UserRegister' } }
+      responses:
+        '201':
+          description: created
+        '400': { description: bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /users/login:
+    post:
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: '#/components/schemas/UserLogin' } }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '401':
+          description: unauthorized
+
+  /events:
+    post:
+      summary: Create event (admin)
+      security: [ { BearerAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: '#/components/schemas/CreateEventReq' } }
+      responses:
+        '201': { description: created, content: { application/json: { schema: { $ref: '#/components/schemas/Event' } } } }
+        '403': { description: forbidden }
+    get:
+      summary: List events (paged)
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Event' }
+
+  /events/{id}:
+    get:
+      summary: Get event
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Event' } } } }
+        '404': { description: not found }
+
+  /events/{id}/seats:
+    get:
+      summary: Get seat map for event (public)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: seat map
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Seat' }
+
+    post:
+      summary: Bulk create seats (admin)
+      security: [ { BearerAuth: [] } ]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: '#/components/schemas/BulkCreateSeatsReq' } }
+      responses:
+        '201':
+          description: seats created
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Seat' }
+
+  /holds:
+    post:
+      summary: Create a hold (selection-before-pay)
+      security: [ { BearerAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: '#/components/schemas/CreateHoldReq' } }
+      responses:
+        '201':
+          description: hold created
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/CreateHoldResp' } }
+        '409': { description: conflict (seat not available) }
+        '400': { description: bad request }
+
+  /bookings:
+    post:
+      summary: Create booking (idempotent)
+      security: [ { BearerAuth: [] } ]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: '#/components/schemas/CreateBookingReq' } }
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BookingSummary' }
+        '200':
+          description: idempotent existing booking returned (payload matched)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BookingSummary' }
+        '409': { description: conflict (seat not available or idempotency payload mismatch) }
+        '400': { description: bad request }
+
+    get:
+      summary: Get my bookings
+      security: [ { BearerAuth: [] } ]
+      responses:
+        '200':
+          description: bookings
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/BookingResponse' }
+
+  /bookings/{id}:
+    get:
+      summary: Get a booking by id (owner only)
+      security: [ { BearerAuth: [] } ]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: booking
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BookingResponse' }
+        '403': { description: forbidden }
+        '404': { description: not found }
+
+    delete:
+      summary: Cancel booking (owner or admin)
+      security: [ { BearerAuth: [] } ]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: cancelled }
+        '403': { description: forbidden }
+        '409': { description: invalid state / cannot cancel }
+
+  /events/{id}/waitlist:
+    post:
+      summary: Join waitlist for event
+      security: [ { BearerAuth: [] } ]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: '#/components/schemas/JoinWaitlistReq' } }
+      responses:
+        '202':
+          description: accepted
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/JoinWaitlistResp' } }
+        '400': { description: bad request }
+        '409': { description: already in waitlist }
+
+security:
+  - BearerAuth: []
