@@ -34,3 +34,23 @@ WHERE id = $2;
 UPDATE seat_holds
 SET status = 'converted'
 WHERE hold_token = $1;
+
+
+
+
+-- name: GetBookingsByUser :many
+SELECT id, event_id, user_id, seats, seat_ids, status, idempotency_key, created_at, updated_at
+FROM bookings
+WHERE user_id = $1
+ORDER BY created_at DESC;
+
+-- name: GetBookingByID :one
+SELECT id, event_id, user_id, seats, seat_ids, status, idempotency_key, created_at, updated_at
+FROM bookings
+WHERE id = $1;
+
+-- name: GetSeatNosByIds :many
+SELECT seat_no
+FROM seats
+WHERE id = ANY($1::uuid[])
+ORDER BY seat_no;

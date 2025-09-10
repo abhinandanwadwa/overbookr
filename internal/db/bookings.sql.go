@@ -51,6 +51,93 @@ func (q *Queries) GetBookingByEventAndIdempotency(ctx context.Context, arg GetBo
 	return i, err
 }
 
+const getBookingByID = `-- name: GetBookingByID :one
+SELECT id, event_id, user_id, seats, seat_ids, status, idempotency_key, created_at, updated_at
+FROM bookings
+WHERE id = $1
+`
+
+func (q *Queries) GetBookingByID(ctx context.Context, id pgtype.UUID) (Booking, error) {
+	row := q.db.QueryRow(ctx, getBookingByID, id)
+	var i Booking
+	err := row.Scan(
+		&i.ID,
+		&i.EventID,
+		&i.UserID,
+		&i.Seats,
+		&i.SeatIds,
+		&i.Status,
+		&i.IdempotencyKey,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getBookingsByUser = `-- name: GetBookingsByUser :many
+SELECT id, event_id, user_id, seats, seat_ids, status, idempotency_key, created_at, updated_at
+FROM bookings
+WHERE user_id = $1
+ORDER BY created_at DESC
+`
+
+func (q *Queries) GetBookingsByUser(ctx context.Context, userID pgtype.UUID) ([]Booking, error) {
+	rows, err := q.db.Query(ctx, getBookingsByUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Booking
+	for rows.Next() {
+		var i Booking
+		if err := rows.Scan(
+			&i.ID,
+			&i.EventID,
+			&i.UserID,
+			&i.Seats,
+			&i.SeatIds,
+			&i.Status,
+			&i.IdempotencyKey,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getSeatNosByIds = `-- name: GetSeatNosByIds :many
+SELECT seat_no
+FROM seats
+WHERE id = ANY($1::uuid[])
+ORDER BY seat_no
+`
+
+func (q *Queries) GetSeatNosByIds(ctx context.Context, dollar_1 []pgtype.UUID) ([]string, error) {
+	rows, err := q.db.Query(ctx, getSeatNosByIds, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var seat_no string
+		if err := rows.Scan(&seat_no); err != nil {
+			return nil, err
+		}
+		items = append(items, seat_no)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getSeatsForBookingForUpdate = `-- name: GetSeatsForBookingForUpdate :many
 SELECT id, seat_no, status, hold_token
 FROM seats

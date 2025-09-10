@@ -89,7 +89,6 @@ UPDATE seats
 SET status = 'held',
     hold_expires_at = $1,
     hold_token = $2
-    -- updated_at = now()
 WHERE id = ANY($3::uuid[])
 `
 

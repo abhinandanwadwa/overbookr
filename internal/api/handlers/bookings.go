@@ -31,6 +31,18 @@ type CreateBookingResponse struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// BookingResponse is the shape returned to clients for bookings.
+type BookingResponse struct {
+	ID        string    `json:"id"`
+	EventID   string    `json:"event_id"`
+	SeatNos   []string  `json:"seat_nos"`
+	SeatIds   []string  `json:"seat_ids,omitempty"` // optional, stringified UUIDs
+	SeatsCnt  int32     `json:"seats_count"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // Variables for retries
 const (
 	createBookingMaxRetries = 3
@@ -386,4 +398,161 @@ func (h *BookingsHandler) CreateBooking(c *gin.Context) {
 
 	// if we've exhausted retries
 	c.JSON(http.StatusServiceUnavailable, gin.H{"error": "could not complete booking due to concurrent conflicts; please retry"})
+}
+
+// GET /bookings/me  -> GetMyBookings
+// Returns all bookings that belong to the authenticated user (past + present).
+func (h *BookingsHandler) GetMyBookings(c *gin.Context) {
+	ctx := context.Background()
+
+	// get authenticated user id (auth middleware must set "user_id")
+	var uid uuid.UUID
+	if v, ok := c.Get("user_id"); ok {
+		switch t := v.(type) {
+		case uuid.UUID:
+			uid = t
+		case string:
+			if parsed, err := uuid.Parse(t); err == nil {
+				uid = parsed
+			} else {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id in context"})
+				return
+			}
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id in context"})
+			return
+		}
+	} else {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+
+	// Call sqlc-generated query: GetBookingsByUser(ctx, pgtype.UUID{Bytes: uid, Valid:true})
+	userParam := pgtype.UUID{Bytes: uid, Valid: true}
+	bookings, err := h.db.GetBookingsByUser(ctx, userParam)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch bookings", "details": err.Error()})
+		return
+	}
+
+	out := make([]BookingResponse, 0, len(bookings))
+	for _, b := range bookings {
+		// build seatIds slice for GetSeatNosByIds query and response
+		pgIDs := make([]pgtype.UUID, 0, len(b.SeatIds))
+		seatIDStrs := make([]string, 0, len(b.SeatIds))
+		for _, pgid := range b.SeatIds {
+			pgIDs = append(pgIDs, pgid)
+			if pgid.Valid {
+				seatIDStrs = append(seatIDStrs, pgid.String())
+			}
+		}
+
+		// fetch seat numbers for these ids using the GetSeatNosByIds query
+		seatNos := []string{}
+		if len(pgIDs) > 0 {
+			rows, err := h.db.GetSeatNosByIds(ctx, pgIDs)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load seat numbers", "details": err.Error()})
+				return
+			}
+			// for _, s := range rows {
+			// 	seatNos = append(seatNos, s)
+			// }
+			seatNos = append(seatNos, rows...)
+		}
+
+		out = append(out, BookingResponse{
+			ID:        b.ID.String(),
+			EventID:   b.EventID.String(),
+			SeatNos:   seatNos,
+			SeatIds:   seatIDStrs,
+			SeatsCnt:  b.Seats,
+			Status:    b.Status,
+			CreatedAt: b.CreatedAt.Time,
+			UpdatedAt: b.UpdatedAt.Time,
+		})
+	}
+
+	c.JSON(http.StatusOK, out)
+}
+
+// GET /bookings/:id -> GetBookingByID (only owner can view)
+func (h *BookingsHandler) GetBookingByID(c *gin.Context) {
+	ctx := context.Background()
+	bookingIDStr := c.Param("id")
+	bookingID, err := uuid.Parse(bookingIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid booking id", "details": err.Error()})
+		return
+	}
+
+	// fetch the booking
+	b, err := h.db.GetBookingByID(ctx, pgtype.UUID{Bytes: bookingID, Valid: true})
+	if err != nil {
+		// not found or other
+		c.JSON(http.StatusNotFound, gin.H{"error": "booking not found", "details": err.Error()})
+		return
+	}
+
+	// get authenticated user id
+	var uid uuid.UUID
+	if v, ok := c.Get("user_id"); ok {
+		switch t := v.(type) {
+		case uuid.UUID:
+			uid = t
+		case string:
+			if parsed, err := uuid.Parse(t); err == nil {
+				uid = parsed
+			} else {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id in context"})
+				return
+			}
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id in context"})
+			return
+		}
+	} else {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+
+	// enforce owner-only visibility
+	if !b.UserID.Valid || b.UserID.Bytes != uid {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden: only booking owner may view this booking"})
+		return
+	}
+
+	// resolve seat nos
+	pgIDs := make([]pgtype.UUID, 0, len(b.SeatIds))
+	seatIDStrs := make([]string, 0, len(b.SeatIds))
+	for _, pgid := range b.SeatIds {
+		pgIDs = append(pgIDs, pgid)
+		if pgid.Valid {
+			seatIDStrs = append(seatIDStrs, pgid.String())
+		}
+	}
+
+	seatNos := []string{}
+	if len(pgIDs) > 0 {
+		rows, err := h.db.GetSeatNosByIds(ctx, pgIDs)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load seat numbers", "details": err.Error()})
+			return
+		}
+		for _, s := range rows {
+			seatNos = append(seatNos, s)
+		}
+	}
+
+	resp := BookingResponse{
+		ID:        b.ID.String(),
+		EventID:   b.EventID.String(),
+		SeatNos:   seatNos,
+		SeatIds:   seatIDStrs,
+		SeatsCnt:  b.Seats,
+		Status:    b.Status,
+		CreatedAt: b.CreatedAt.Time,
+		UpdatedAt: b.UpdatedAt.Time,
+	}
+	c.JSON(http.StatusOK, resp)
 }

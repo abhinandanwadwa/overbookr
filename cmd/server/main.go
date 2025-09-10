@@ -37,11 +37,4 @@ func main() {
 		log.Printf("server exited: %v", err)
 		os.Exit(1)
 	}
-
-	// dbx := db.New(conn)
-	// events, err := dbx.GetAllEvents(ctx)
-	// if err != nil {
-	// 	log.Fatal("Error fetching events:", err)
-	// }
-	// fmt.Println("Events:", events)
 }

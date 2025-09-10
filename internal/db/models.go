@@ -53,6 +53,7 @@ type SeatHold struct {
 	ExpiresAt pgtype.Timestamptz
 	Status    string
 	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
 }
 
 type User struct {

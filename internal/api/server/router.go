@@ -52,8 +52,9 @@ func NewRouter(deps AppDeps) *gin.Engine {
 	bookings := router.Group("/bookings")
 	{
 		bookings.POST("/", middleware.AuthMiddleware(), bookingsHandler.CreateBooking)
-		// bookings.GET("/:id", middleware.AuthMiddleware(), bookingsHandler.GetBookingByID)
-		// bookings.GET("/", middleware.AuthMiddleware(), bookingsHandler.GetBookings)
+		bookings.GET("/", middleware.AuthMiddleware(), bookingsHandler.GetMyBookings)
+		bookings.GET("/:id", middleware.AuthMiddleware(), bookingsHandler.GetBookingByID)
+		bookings.DELETE("/:id", middleware.AuthMiddleware(), bookingsHandler.CancelBooking)
 	}
 
 	return router
