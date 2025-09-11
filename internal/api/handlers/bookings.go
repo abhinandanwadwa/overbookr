@@ -2,9 +2,12 @@ package handlers
 
 import (
 	"context"
+	"log"
 	"net/http"
+	"os"
 	"time"
 
+	mail "github.com/abhinandanwadwa/overbookr/internal/api/utils"
 	"github.com/abhinandanwadwa/overbookr/internal/db"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -82,6 +85,34 @@ func SimpleValidateHold(ctx context.Context, q *db.Queries, token string, eventI
 	}
 
 	return 0, "", true
+}
+
+func sendConfirmationMail(resp CreateBookingResponse, userId pgtype.UUID, bookingsHandler *BookingsHandler) {
+	log.Println("Preparing to send confirmation email for booking ID:", resp.ID)
+	mailer := mail.NewMailer(
+		"smtp.gmail.com",
+		587,
+		os.Getenv("GMAIL_USER"),
+		os.Getenv("GMAIL_PASS"),
+	)
+
+	user, err := bookingsHandler.db.GetUserByID(context.Background(), userId)
+	if err != nil {
+		log.Println("failed to get user for sending confirmation email:", err)
+	}
+
+	event, err := bookingsHandler.db.GetEventByID(context.Background(), pgtype.UUID{Bytes: uuid.MustParse(resp.EventID), Valid: true})
+	if err != nil {
+		log.Println("failed to get event for sending confirmation email:", err)
+	}
+
+	newResp := mail.CreateBookingResponse{
+		ID:          resp.ID,
+		EventID:     resp.EventID,
+		SeatNumbers: resp.SeatNumbers,
+		CreatedAt:   resp.CreatedAt,
+	}
+	mail.SendConfirmationMail(mailer, newResp, event, user.Email, true)
 }
 
 func (h *BookingsHandler) CreateBooking(c *gin.Context) {
@@ -341,6 +372,11 @@ func (h *BookingsHandler) CreateBooking(c *gin.Context) {
 			CreatedAt:   bookingRow.CreatedAt.Time,
 		}
 		c.JSON(http.StatusCreated, resp)
+
+		// Send mail for the confirmed booking
+		log.Println("Sending confirmation email for booking ID:", resp.ID)
+		go sendConfirmationMail(resp, userIDParam, h)
+
 		return
 	}
 
