@@ -97,15 +97,12 @@ components:
         expires_at: { type: string, format: date-time }
     CreateBookingReq:
       type: object
-      required: [event_id, seat_nos]
+      required: [event_id, hold_token]
       properties:
         event_id: { type: string, format: uuid }
-        seat_nos:
-          type: array
-          items: { type: string }
         hold_token:
           type: string
-          nullable: true
+          nullable: false
     BookingSummary:
       type: object
       properties:
