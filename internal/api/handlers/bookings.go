@@ -320,7 +320,8 @@ func (h *BookingsHandler) CreateBooking(c *gin.Context) {
 			return
 		}
 
-		if err := q.UpdateEventBookedCount(ctx, db.UpdateEventBookedCountParams{BookedCount: seatsCount, ID: eventParam}); err != nil {
+		rowsAffected, err := q.UpdateEventBookedCount(ctx, db.UpdateEventBookedCountParams{BookedCount: seatsCount, ID: eventParam})
+		if err != nil {
 			rollbackIfNeeded()
 			if pgErr, ok := err.(*pgconn.PgError); ok {
 				if pgErr.Code == "40001" || pgErr.Code == "40P01" {
@@ -330,6 +331,11 @@ func (h *BookingsHandler) CreateBooking(c *gin.Context) {
 				}
 			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update event booked_count", "details": err.Error()})
+			return
+		}
+		if rowsAffected == 0 {
+			rollbackIfNeeded()
+			c.JSON(http.StatusConflict, gin.H{"error": "event capacity exceeded", "details": "not enough capacity to book the requested seats"})
 			return
 		}
 

@@ -118,7 +118,12 @@ func (w *WaitlistWorker) ProcessWaitlistForEvent(ctx context.Context, eventID uu
 			continue
 		}
 
-		if err := qtx.UpdateEventBookedCount(ctx, db.UpdateEventBookedCountParams{BookedCount: int32(len(seatIDs)), ID: eventParam}); err != nil {
+		rowsAffected, err := qtx.UpdateEventBookedCount(ctx, db.UpdateEventBookedCountParams{BookedCount: int32(len(seatIDs)), ID: eventParam})
+		if err != nil {
+			rollbackIfNeeded()
+			continue
+		}
+		if rowsAffected == 0 {
 			rollbackIfNeeded()
 			continue
 		}

@@ -251,10 +251,11 @@ func (q *Queries) InsertBooking(ctx context.Context, arg InsertBookingParams) (I
 	return i, err
 }
 
-const updateEventBookedCount = `-- name: UpdateEventBookedCount :exec
+const updateEventBookedCount = `-- name: UpdateEventBookedCount :execrows
 UPDATE events
 SET booked_count = booked_count + $1
 WHERE id = $2
+  AND booked_count + $1 <= capacity
 `
 
 type UpdateEventBookedCountParams struct {
@@ -262,9 +263,12 @@ type UpdateEventBookedCountParams struct {
 	ID          pgtype.UUID
 }
 
-func (q *Queries) UpdateEventBookedCount(ctx context.Context, arg UpdateEventBookedCountParams) error {
-	_, err := q.db.Exec(ctx, updateEventBookedCount, arg.BookedCount, arg.ID)
-	return err
+func (q *Queries) UpdateEventBookedCount(ctx context.Context, arg UpdateEventBookedCountParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateEventBookedCount, arg.BookedCount, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateSeatsToBooked = `-- name: UpdateSeatsToBooked :exec

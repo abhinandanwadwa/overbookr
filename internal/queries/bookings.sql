@@ -24,10 +24,11 @@ SET STATUS = 'booked',
     hold_token = NULL
 WHERE id = ANY($2::uuid[]);
 
--- name: UpdateEventBookedCount :exec
+-- name: UpdateEventBookedCount :execrows
 UPDATE events
 SET booked_count = booked_count + $1
-WHERE id = $2;
+WHERE id = $2
+  AND booked_count + $1 <= capacity;
 
 -- name: ConvertSeatHoldToConverted :exec
 UPDATE seat_holds
