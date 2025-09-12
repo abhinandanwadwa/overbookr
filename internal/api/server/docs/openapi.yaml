@@ -1,365 +1,1297 @@
 openapi: 3.0.3
 info:
-  title: overbookr API
+  title: Overbookr API
   version: "1.0.0"
   description: |
-    Backend API for overbookr (seat-level bookings, holds, waitlist, workers).
-    See docs/README for behavior details and concurrency semantics.
+    # Overbookr - Advanced Event Booking System
+    
+    A comprehensive seat-level booking system with holds, waitlists, and real-time capacity management.
+    
+    ## Key Features
+    - **Seat-Level Bookings**: Individual seat selection and management
+    - **Hold System**: Temporary seat holds with expiration
+    - **Waitlist Management**: Automatic promotion when seats become available
+    - **Atomic Capacity Control**: Prevents overselling with atomic database operations
+    - **Idempotent Operations**: Safe retry mechanisms for critical operations
+    - **Real-time Analytics**: Comprehensive booking and utilization insights
+    
+    ## Authentication
+    All protected endpoints require a valid JWT token in the Authorization header:
+    ```
+    Authorization: Bearer <your-jwt-token>
+    ```
+    
+    ## Rate Limiting
+    - Hold creation: 5 requests per minute per user
+    - Booking creation: 10 requests per minute per user
+    - General API: 100 requests per minute per user
+    
+    ## Error Handling
+    All errors follow a consistent format:
+    ```json
+    {
+      "error": "Error message",
+      "details": "Additional details",
+      "code": "ERROR_CODE"
+    }
+    ```
+    
+  contact:
+    name: Overbookr API Support
+    email: support@overbookr.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
 servers:
   - url: https://overbookr-production.up.railway.app
-    description: Production
+    description: Production Environment
   - url: http://localhost:8080
-    description: Local development
+    description: Local Development Environment
+
+tags:
+  - name: Authentication
+    description: User registration and authentication
+  - name: Events
+    description: Event management and seat operations
+  - name: Bookings
+    description: Booking creation, management, and cancellation
+  - name: Holds
+    description: Temporary seat holds
+  - name: Waitlist
+    description: Waitlist management
+  - name: Analytics
+    description: Booking analytics and insights
+  - name: System
+    description: System health and monitoring
+
 components:
   securitySchemes:
     BearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: JWT token obtained from login endpoint
 
   schemas:
+    # Common Schemas
     Error:
       type: object
+      required: [error]
       properties:
         error:
           type: string
+          description: Error message
+          example: "Invalid request"
         details:
           type: string
+          description: Additional error details
+          example: "The provided event ID is not a valid UUID"
+        code:
+          type: string
+          description: Error code for programmatic handling
+          example: "INVALID_UUID"
+    
     Health:
       type: object
       properties:
         status:
           type: string
+          enum: [ok]
+          example: "ok"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2024-01-15T10:30:00Z"
+
+    # User Schemas
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        name:
+          type: string
+          example: "John Doe"
+        email:
+          type: string
+          format: email
+          example: "john.doe@example.com"
+        role:
+          type: string
+          enum: [user, admin]
+          example: "user"
+        created_at:
+          type: string
+          format: date-time
+          example: "2024-01-15T10:30:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2024-01-15T10:30:00Z"
+
     UserRegister:
       type: object
       required: [name, email, password, role]
       properties:
-        name: { type: string }
-        email: { type: string, format: email }
-        password: { type: string }
-        role: { type: string, enum: [user, admin] }
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: "John Doe"
+        email:
+          type: string
+          format: email
+          example: "john.doe@example.com"
+        password:
+          type: string
+          minLength: 6
+          example: "securepassword123"
+        role:
+          type: string
+          enum: [user, admin]
+          example: "user"
+
     UserLogin:
       type: object
       required: [email, password]
       properties:
-        email: { type: string, format: email }
-        password: { type: string }
+        email:
+          type: string
+          format: email
+          example: "john.doe@example.com"
+        password:
+          type: string
+          example: "securepassword123"
+
     AuthResponse:
-      type: object
-      properties:
-        token: { type: string }
+      allOf:
+        - $ref: '#/components/schemas/User'
+        - type: object
+          properties:
+            token:
+              type: string
+              description: JWT token for authentication
+              example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+    # Event Schemas
     Event:
       type: object
       properties:
-        id: { type: string, format: uuid }
-        name: { type: string }
-        venue: { type: string, nullable: true }
-        start_time: { type: string, format: date-time, nullable: true }
-        capacity: { type: integer }
-        booked_count: { type: integer }
-        metadata: { type: object }
-        created_at: { type: string, format: date-time }
-        updated_at: { type: string, format: date-time }
-    CreateEventReq:
+        id:
+          type: string
+          format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        name:
+          type: string
+          example: "Concert at Madison Square Garden"
+        venue:
+          type: string
+          nullable: true
+          example: "Madison Square Garden"
+        start_time:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2024-06-15T19:30:00Z"
+        capacity:
+          type: integer
+          minimum: 0
+          example: 1000
+        booked_count:
+          type: integer
+          minimum: 0
+          example: 750
+        available:
+          type: integer
+          minimum: 0
+          example: 250
+        metadata:
+          type: object
+          additionalProperties: true
+          example: {"genre": "rock", "age_restriction": "18+"}
+        created_at:
+          type: string
+          format: date-time
+          example: "2024-01-15T10:30:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2024-01-15T10:30:00Z"
+
+    CreateEventRequest:
       type: object
       required: [name, venue, start_time, capacity]
       properties:
-        name: { type: string }
-        venue: { type: string }
-        start_time: { type: string, format: date-time }
-        capacity: { type: integer }
-        metadata: { type: object }
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          example: "Concert at Madison Square Garden"
+        venue:
+          type: string
+          minLength: 1
+          maxLength: 200
+          example: "Madison Square Garden"
+        start_time:
+          type: string
+          format: date-time
+          example: "2024-06-15T19:30:00Z"
+        capacity:
+          type: integer
+          minimum: 1
+          maximum: 100000
+          example: 1000
+        metadata:
+          type: object
+          additionalProperties: true
+          example: {"genre": "rock", "age_restriction": "18+"}
+
+    # Seat Schemas
     Seat:
       type: object
       properties:
-        seat_no: { type: string }
-        status: { type: string, enum: [available, held, booked, blocked] }
-        booking_id: { type: string, format: uuid, nullable: true }
-    BulkCreateSeatsReq:
+        id:
+          type: string
+          format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        seat_no:
+          type: string
+          example: "A12"
+        status:
+          type: string
+          enum: [available, held, booked, blocked]
+          example: "available"
+        booking_id:
+          type: string
+          format: uuid
+          nullable: true
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        created_at:
+          type: string
+          format: date-time
+          example: "2024-01-15T10:30:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2024-01-15T10:30:00Z"
+
+    BulkCreateSeatsRequest:
       type: object
       required: [seat_nos]
       properties:
         seat_nos:
           type: array
-          items: { type: string }
-    CreateHoldReq:
+          items:
+            type: string
+          minItems: 1
+          maxItems: 1000
+          example: ["A1", "A2", "A3", "B1", "B2"]
+
+    # Hold Schemas
+    CreateHoldRequest:
       type: object
       required: [event_id, seat_nos]
       properties:
-        event_id: { type: string, format: uuid }
+        event_id:
+          type: string
+          format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
         seat_nos:
           type: array
-          items: { type: string }
-    CreateHoldResp:
+          items:
+            type: string
+          minItems: 1
+          maxItems: 10
+          example: ["A12", "A13"]
+
+    CreateHoldResponse:
       type: object
       properties:
-        hold_token: { type: string }
-        expires_at: { type: string, format: date-time }
-    CreateBookingReq:
+        hold_token:
+          type: string
+          description: Token to use for booking creation
+          example: "hold_123e4567-e89b-12d3-a456-426614174000"
+        expires_at:
+          type: string
+          format: date-time
+          description: When the hold expires
+          example: "2024-01-15T10:35:00Z"
+
+    # Booking Schemas
+    CreateBookingRequest:
       type: object
       required: [event_id, hold_token]
       properties:
-        event_id: { type: string, format: uuid }
+        event_id:
+          type: string
+          format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
         hold_token:
           type: string
-          nullable: false
+          description: Token from hold creation
+          example: "hold_123e4567-e89b-12d3-a456-426614174000"
+
     BookingSummary:
       type: object
       properties:
-        id: { type: string, format: uuid }
-        event_id: { type: string, format: uuid }
-        seat_nos:
+        id:
+          type: string
+          format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        event_id:
+          type: string
+          format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        seat_numbers:
           type: array
-          items: { type: string }
-        created_at: { type: string, format: date-time }
+          items:
+            type: string
+          example: ["A12", "A13"]
+        created_at:
+          type: string
+          format: date-time
+          example: "2024-01-15T10:30:00Z"
+
     BookingResponse:
       type: object
       properties:
-        id: { type: string, format: uuid }
-        event_id: { type: string, format: uuid }
-        seat_nos:
+        id:
+          type: string
+          format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        event_id:
+          type: string
+          format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        seats_count:
+          type: integer
+          minimum: 1
+          example: 2
+        seat_numbers:
           type: array
-          items: { type: string }
-        seats_count: { type: integer }
-        status: { type: string }
-        created_at: { type: string, format: date-time }
-        updated_at: { type: string, format: date-time }
-    JoinWaitlistReq:
+          items:
+            type: string
+          example: ["A12", "A13"]
+        status:
+          type: string
+          enum: [active, cancelled, expired, failed]
+          example: "active"
+        created_at:
+          type: string
+          format: date-time
+          example: "2024-01-15T10:30:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2024-01-15T10:30:00Z"
+
+    # Waitlist Schemas
+    JoinWaitlistRequest:
       type: object
       required: [requested_seats]
       properties:
-        requested_seats: { type: integer }
-    JoinWaitlistResp:
+        requested_seats:
+          type: integer
+          minimum: 1
+          maximum: 10
+          example: 2
+
+    JoinWaitlistResponse:
       type: object
       properties:
-        id: { type: string, format: uuid }
-        position: { type: integer }
-        created_at: { type: string, format: date-time }
+        id:
+          type: string
+          format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        position:
+          type: integer
+          minimum: 1
+          description: Position in waitlist
+          example: 5
+        created_at:
+          type: string
+          format: date-time
+          example: "2024-01-15T10:30:00Z"
+
+    # Analytics Schemas
+    AnalyticsResponse:
+      type: object
+      properties:
+        range:
+          $ref: '#/components/schemas/TimeRange'
+        totals:
+          $ref: '#/components/schemas/Totals'
+        by_day:
+          type: array
+          items:
+            $ref: '#/components/schemas/BookingsPerDayPoint'
+        top_events:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopEvent'
+        by_status:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatusCount'
+        event_utilization:
+          type: array
+          items:
+            $ref: '#/components/schemas/EventUtilizationPoint'
+
+    TimeRange:
+      type: object
+      properties:
+        from:
+          type: string
+          format: date-time
+          example: "2024-01-01T00:00:00Z"
+        to:
+          type: string
+          format: date-time
+          example: "2024-01-31T23:59:59Z"
+
+    Totals:
+      type: object
+      properties:
+        total_bookings:
+          type: integer
+          minimum: 0
+          example: 1250
+        total_seats_booked:
+          type: integer
+          minimum: 0
+          example: 3750
+        total_cancellations:
+          type: integer
+          minimum: 0
+          example: 50
+        total_active:
+          type: integer
+          minimum: 0
+          example: 1200
+
+    BookingsPerDayPoint:
+      type: object
+      properties:
+        day:
+          type: string
+          format: date
+          example: "2024-01-15"
+        bookings:
+          type: integer
+          minimum: 0
+          example: 25
+        seats_booked:
+          type: integer
+          minimum: 0
+          example: 75
+
+    TopEvent:
+      type: object
+      properties:
+        event_id:
+          type: string
+          format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        name:
+          type: string
+          example: "Concert at Madison Square Garden"
+        bookings_count:
+          type: integer
+          minimum: 0
+          example: 500
+        seats_booked:
+          type: integer
+          minimum: 0
+          example: 1500
+        capacity:
+          type: integer
+          minimum: 0
+          example: 2000
+        booked_count:
+          type: integer
+          minimum: 0
+          example: 1500
+
+    StatusCount:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [active, cancelled, expired, failed]
+          example: "active"
+        count:
+          type: integer
+          minimum: 0
+          example: 1200
+
+    EventUtilizationPoint:
+      type: object
+      properties:
+        event_id:
+          type: string
+          format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        name:
+          type: string
+          example: "Concert at Madison Square Garden"
+        capacity:
+          type: integer
+          minimum: 0
+          example: 2000
+        booked_count:
+          type: integer
+          minimum: 0
+          example: 1500
+        bookings_seats_in_range:
+          type: integer
+          minimum: 0
+          example: 1200
 
 paths:
+  # System Health
   /healthz:
     get:
-      summary: Health check
+      tags: [System]
+      summary: Health Check
+      description: Check if the API is running and healthy
       responses:
         '200':
-          description: OK
+          description: Service is healthy
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Health' }
+              schema:
+                $ref: '#/components/schemas/Health'
+              example:
+                status: "ok"
+                timestamp: "2024-01-15T10:30:00Z"
 
+  # Authentication Endpoints
   /users/register:
     post:
-      summary: Register user
+      tags: [Authentication]
+      summary: Register New User
+      description: Create a new user account
       requestBody:
         required: true
         content:
-          application/json: { schema: { $ref: '#/components/schemas/UserRegister' } }
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserRegister'
+            example:
+              name: "John Doe"
+              email: "john.doe@example.com"
+              password: "securepassword123"
+              role: "user"
       responses:
         '201':
-          description: created
-        '400': { description: bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+              example:
+                id: "123e4567-e89b-12d3-a456-426614174000"
+                name: "John Doe"
+                email: "john.doe@example.com"
+                role: "user"
+                token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                created_at: "2024-01-15T10:30:00Z"
+                updated_at: "2024-01-15T10:30:00Z"
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "Invalid input"
+                details: "Email is required"
+                code: "VALIDATION_ERROR"
+        '409':
+          description: User already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "User already exists"
+                details: "A user with this email already exists"
+                code: "USER_EXISTS"
 
   /users/login:
     post:
-      summary: Login
+      tags: [Authentication]
+      summary: User Login
+      description: Authenticate user and receive JWT token
       requestBody:
         required: true
         content:
-          application/json: { schema: { $ref: '#/components/schemas/UserLogin' } }
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserLogin'
+            example:
+              email: "john.doe@example.com"
+              password: "securepassword123"
       responses:
         '200':
-          description: ok
+          description: Login successful
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AuthResponse' }
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+              example:
+                id: "123e4567-e89b-12d3-a456-426614174000"
+                name: "John Doe"
+                email: "john.doe@example.com"
+                role: "user"
+                token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                created_at: "2024-01-15T10:30:00Z"
+                updated_at: "2024-01-15T10:30:00Z"
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
-          description: unauthorized
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "Invalid credentials"
+                code: "INVALID_CREDENTIALS"
 
+  # Event Management
   /events:
     post:
-      summary: Create event (admin)
-      security: [ { BearerAuth: [] } ]
+      tags: [Events]
+      summary: Create Event
+      description: Create a new event (admin only)
+      security:
+        - BearerAuth: []
       requestBody:
         required: true
         content:
-          application/json: { schema: { $ref: '#/components/schemas/CreateEventReq' } }
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEventRequest'
+            example:
+              name: "Concert at Madison Square Garden"
+              venue: "Madison Square Garden"
+              start_time: "2024-06-15T19:30:00Z"
+              capacity: 1000
+              metadata:
+                genre: "rock"
+                age_restriction: "18+"
       responses:
-        '201': { description: created, content: { application/json: { schema: { $ref: '#/components/schemas/Event' } } } }
-        '403': { description: forbidden }
+        '201':
+          description: Event created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden - Admin access required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
     get:
-      summary: List events (paged)
+      tags: [Events]
+      summary: List Events
+      description: Get paginated list of events
       parameters:
         - name: limit
           in: query
-          schema: { type: integer, default: 20 }
+          description: Number of events to return
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          example: 20
         - name: offset
           in: query
-          schema: { type: integer, default: 0 }
+          description: Number of events to skip
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          example: 0
       responses:
         '200':
-          description: list
+          description: List of events
           content:
             application/json:
               schema:
                 type: array
-                items: { $ref: '#/components/schemas/Event' }
+                items:
+                  $ref: '#/components/schemas/Event'
+        '400':
+          description: Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /events/{id}:
     get:
-      summary: Get event
+      tags: [Events]
+      summary: Get Event by ID
+      description: Retrieve a specific event by its ID
       parameters:
         - name: id
           in: path
           required: true
-          schema: { type: string, format: uuid }
+          description: Event UUID
+          schema:
+            type: string
+            format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
       responses:
-        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Event' } } } }
-        '404': { description: not found }
+        '200':
+          description: Event details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+        '400':
+          description: Invalid UUID format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Event not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /events/{id}/seats:
     get:
-      summary: Get seat map for event (public)
+      tags: [Events]
+      summary: Get Event Seat Map
+      description: Get all seats for an event with their current status
       parameters:
         - name: id
           in: path
           required: true
-          schema: { type: string, format: uuid }
+          description: Event UUID
+          schema:
+            type: string
+            format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
       responses:
         '200':
-          description: seat map
+          description: Seat map
           content:
             application/json:
               schema:
                 type: array
-                items: { $ref: '#/components/schemas/Seat' }
+                items:
+                  $ref: '#/components/schemas/Seat'
+        '400':
+          description: Invalid UUID format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Event not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
     post:
-      summary: Bulk create seats (admin)
-      security: [ { BearerAuth: [] } ]
+      tags: [Events]
+      summary: Bulk Create Seats
+      description: Create multiple seats for an event (admin only)
+      security:
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
           required: true
-          schema: { type: string, format: uuid }
+          description: Event UUID
+          schema:
+            type: string
+            format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
       requestBody:
         required: true
         content:
-          application/json: { schema: { $ref: '#/components/schemas/BulkCreateSeatsReq' } }
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkCreateSeatsRequest'
+            example:
+              seat_nos: ["A1", "A2", "A3", "B1", "B2", "B3"]
       responses:
         '201':
-          description: seats created
+          description: Seats created successfully
           content:
             application/json:
               schema:
                 type: array
-                items: { $ref: '#/components/schemas/Seat' }
+                items:
+                  $ref: '#/components/schemas/Seat'
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden - Admin access required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Event not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
-  /holds:
+  /events/{id}/waitlist:
     post:
-      summary: Create a hold (selection-before-pay)
-      security: [ { BearerAuth: [] } ]
+      tags: [Waitlist]
+      summary: Join Event Waitlist
+      description: Add user to event waitlist when seats are not available
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Event UUID
+          schema:
+            type: string
+            format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
       requestBody:
         required: true
         content:
-          application/json: { schema: { $ref: '#/components/schemas/CreateHoldReq' } }
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JoinWaitlistRequest'
+            example:
+              requested_seats: 2
+      responses:
+        '202':
+          description: Successfully added to waitlist
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JoinWaitlistResponse'
+              example:
+                id: "123e4567-e89b-12d3-a456-426614174000"
+                position: 5
+                created_at: "2024-01-15T10:30:00Z"
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Already in waitlist
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # Hold Management
+  /holds:
+    post:
+      tags: [Holds]
+      summary: Create Seat Hold
+      description: |
+        Create a temporary hold on seats for a limited time (default 5 minutes).
+        This allows users to select seats before completing payment.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateHoldRequest'
+            example:
+              event_id: "123e4567-e89b-12d3-a456-426614174000"
+              seat_nos: ["A12", "A13"]
       responses:
         '201':
-          description: hold created
+          description: Hold created successfully
           content:
-            application/json: { schema: { $ref: '#/components/schemas/CreateHoldResp' } }
-        '409': { description: conflict (seat not available) }
-        '400': { description: bad request }
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateHoldResponse'
+              example:
+                hold_token: "hold_123e4567-e89b-12d3-a456-426614174000"
+                expires_at: "2024-01-15T10:35:00Z"
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Event or seats not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Seats not available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
+  # Booking Management
   /bookings:
     post:
-      summary: Create booking (idempotent)
-      security: [ { BearerAuth: [] } ]
+      tags: [Bookings]
+      summary: Create Booking
+      description: |
+        Create a booking using a valid hold token. This operation is idempotent.
+        If the same idempotency key is used, the existing booking will be returned.
+      security:
+        - BearerAuth: []
       parameters:
         - name: Idempotency-Key
           in: header
           required: true
-          schema: { type: string }
+          description: Unique key to ensure idempotent operations
+          schema:
+            type: string
+          example: "booking_123e4567-e89b-12d3-a456-426614174000"
       requestBody:
         required: true
         content:
-          application/json: { schema: { $ref: '#/components/schemas/CreateBookingReq' } }
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBookingRequest'
+            example:
+              event_id: "123e4567-e89b-12d3-a456-426614174000"
+              hold_token: "hold_123e4567-e89b-12d3-a456-426614174000"
       responses:
-        '201':
-          description: created
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/BookingSummary' }
         '200':
-          description: idempotent existing booking returned (payload matched)
+          description: Existing booking returned (idempotent)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/BookingSummary' }
-        '409': { description: conflict (seat not available or idempotency payload mismatch) }
-        '400': { description: bad request }
+              schema:
+                $ref: '#/components/schemas/BookingSummary'
+        '201':
+          description: Booking created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingSummary'
+              example:
+                id: "123e4567-e89b-12d3-a456-426614174000"
+                event_id: "123e4567-e89b-12d3-a456-426614174000"
+                seat_numbers: ["A12", "A13"]
+                created_at: "2024-01-15T10:30:00Z"
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: |
+            Conflict - Either seats not available, hold expired, 
+            or idempotency key mismatch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                capacity_exceeded:
+                  summary: Event capacity exceeded
+                  value:
+                    error: "event capacity exceeded"
+                    details: "not enough capacity to book the requested seats"
+                hold_expired:
+                  summary: Hold token expired
+                  value:
+                    error: "hold token expired"
+                    details: "The hold token has expired"
 
     get:
-      summary: Get my bookings
-      security: [ { BearerAuth: [] } ]
+      tags: [Bookings]
+      summary: Get My Bookings
+      description: Get all bookings for the authenticated user
+      security:
+        - BearerAuth: []
       responses:
         '200':
-          description: bookings
+          description: User's bookings
           content:
             application/json:
               schema:
                 type: array
-                items: { $ref: '#/components/schemas/BookingResponse' }
+                items:
+                  $ref: '#/components/schemas/BookingResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /bookings/{id}:
     get:
-      summary: Get a booking by id (owner only)
-      security: [ { BearerAuth: [] } ]
+      tags: [Bookings]
+      summary: Get Booking by ID
+      description: Get a specific booking by ID (owner only)
+      security:
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
           required: true
-          schema: { type: string, format: uuid }
+          description: Booking UUID
+          schema:
+            type: string
+            format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
       responses:
         '200':
-          description: booking
+          description: Booking details
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/BookingResponse' }
-        '403': { description: forbidden }
-        '404': { description: not found }
+              schema:
+                $ref: '#/components/schemas/BookingResponse'
+        '400':
+          description: Invalid UUID format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden - Not the booking owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Booking not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
     delete:
-      summary: Cancel booking (owner or admin)
-      security: [ { BearerAuth: [] } ]
+      tags: [Bookings]
+      summary: Cancel Booking
+      description: Cancel a booking (owner or admin only)
+      security:
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
           required: true
-          schema: { type: string, format: uuid }
+          description: Booking UUID
+          schema:
+            type: string
+            format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
       responses:
-        '200': { description: cancelled }
-        '403': { description: forbidden }
-        '409': { description: invalid state / cannot cancel }
-
-  /events/{id}/waitlist:
-    post:
-      summary: Join waitlist for event
-      security: [ { BearerAuth: [] } ]
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
-      requestBody:
-        required: true
-        content:
-          application/json: { schema: { $ref: '#/components/schemas/JoinWaitlistReq' } }
-      responses:
-        '202':
-          description: accepted
+        '200':
+          description: Booking cancelled successfully
           content:
-            application/json: { schema: { $ref: '#/components/schemas/JoinWaitlistResp' } }
-        '400': { description: bad request }
-        '409': { description: already in waitlist }
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                    example: "123e4567-e89b-12d3-a456-426614174000"
+                  status:
+                    type: string
+                    example: "cancelled"
+        '400':
+          description: Invalid UUID format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden - Not the booking owner or admin
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Booking not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Booking cannot be cancelled (invalid status)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
+  # Analytics
+  /analytics/total_bookings:
+    get:
+      tags: [Analytics]
+      summary: Get Booking Analytics
+      description: |
+        Get comprehensive booking analytics including totals, trends, 
+        and event utilization (admin only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          description: Start date (ISO 8601 or YYYY-MM-DD)
+          required: false
+          schema:
+            type: string
+            format: date-time
+          example: "2024-01-01T00:00:00Z"
+        - name: to
+          in: query
+          description: End date (ISO 8601 or YYYY-MM-DD)
+          required: false
+          schema:
+            type: string
+            format: date-time
+          example: "2024-01-31T23:59:59Z"
+        - name: top_n
+          in: query
+          description: Number of top events to return
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+          example: 10
+      responses:
+        '200':
+          description: Analytics data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyticsResponse'
+              example:
+                range:
+                  from: "2024-01-01T00:00:00Z"
+                  to: "2024-01-31T23:59:59Z"
+                totals:
+                  total_bookings: 1250
+                  total_seats_booked: 3750
+                  total_cancellations: 50
+                  total_active: 1200
+                by_day:
+                  - day: "2024-01-15"
+                    bookings: 25
+                    seats_booked: 75
+                top_events:
+                  - event_id: "123e4567-e89b-12d3-a456-426614174000"
+                    name: "Concert at Madison Square Garden"
+                    bookings_count: 500
+                    seats_booked: 1500
+                    capacity: 2000
+                    booked_count: 1500
+                by_status:
+                  - status: "active"
+                    count: 1200
+                  - status: "cancelled"
+                    count: 50
+                event_utilization:
+                  - event_id: "123e4567-e89b-12d3-a456-426614174000"
+                    name: "Concert at Madison Square Garden"
+                    capacity: 2000
+                    booked_count: 1500
+                    bookings_seats_in_range: 1200
+        '400':
+          description: Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden - Admin access required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+# Global security
 security:
   - BearerAuth: []
