@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Server struct {
@@ -18,11 +18,10 @@ type Server struct {
 }
 
 type AppDeps struct {
-	DB *pgx.Conn
-	// add Logger, Cache, Metrics, etc.
+	DB *pgxpool.Pool
 }
 
-func NewServer(cgf Config, db *pgx.Conn) *Server {
+func NewServer(cgf Config, db *pgxpool.Pool) *Server {
 	deps := AppDeps{DB: db}
 	router := NewRouter(deps)
 

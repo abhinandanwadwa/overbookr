@@ -11,9 +11,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func EnqueuePromoteEvent(conn *pgx.Conn, eventID uuid.UUID) {
+func EnqueuePromoteEvent(conn *pgxpool.Pool, eventID uuid.UUID) {
 	promoterWorker := workers.NewWaitlistWorker(conn)
 
 	if err := promoterWorker.ProcessWaitlistForEvent(context.Background(), eventID); err != nil {

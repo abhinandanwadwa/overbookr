@@ -12,12 +12,12 @@ import (
 )
 
 type WaitlistWorker struct {
-	DBConn *pgx.Conn
+	DBConn *pgxpool.Pool
 	Pool   *pgxpool.Pool
 	DB     *db.Queries
 }
 
-func NewWaitlistWorker(conn *pgx.Conn) *WaitlistWorker {
+func NewWaitlistWorker(conn *pgxpool.Pool) *WaitlistWorker {
 	return &WaitlistWorker{
 		DBConn: conn,
 		DB:     db.New(conn),

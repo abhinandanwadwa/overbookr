@@ -9,7 +9,7 @@ import (
 	"github.com/abhinandanwadwa/overbookr/internal/db"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -49,7 +49,7 @@ type LoginResponse struct {
 	UpdatedAt string `json:"updated_at"`
 }
 
-func NewUsersHandler(dbconn *pgx.Conn) *UsersHandler {
+func NewUsersHandler(dbconn *pgxpool.Pool) *UsersHandler {
 	return &UsersHandler{
 		db: db.New(dbconn),
 	}
@@ -59,11 +59,12 @@ func (h *UsersHandler) Register(c *gin.Context) {
 	// check JWT secret early (fail fast)
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "Server misconfiguration: JWT secret not set",
-			"details": "Set JWT_SECRET environment variable",
-		})
-		return
+		// c.JSON(http.StatusInternalServerError, gin.H{
+		// 	"error":   "Server misconfiguration: JWT secret not set",
+		// 	"details": "Set JWT_SECRET environment variable",
+		// })
+		// return
+		secret = "secret"
 	}
 
 	var req RegisterUserRequest
@@ -145,10 +146,12 @@ func (h *UsersHandler) Login(c *gin.Context) {
 	// check JWT secret early (fail fast)
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "Server misconfiguration: JWT secret not set",
-			"details": "Set JWT_SECRET environment variable",
-		})
+		// c.JSON(http.StatusInternalServerError, gin.H{
+		// 	"error":   "Server misconfiguration: JWT secret not set",
+		// 	"details": "Set JWT_SECRET environment variable",
+		// })
+		// return
+		secret = "secret"
 		return
 	}
 

@@ -5,16 +5,16 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // ReconcileWorker performs periodic consistency checks and optionally fixes mismatches.
 type ReconcileWorker struct {
-	DBConn *pgx.Conn
+	DBConn *pgxpool.Pool
 }
 
 // NewReconcileWorker constructs the worker
-func NewReconcileWorker(conn *pgx.Conn) *ReconcileWorker {
+func NewReconcileWorker(conn *pgxpool.Pool) *ReconcileWorker {
 	return &ReconcileWorker{DBConn: conn}
 }
 

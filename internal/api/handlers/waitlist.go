@@ -2,16 +2,20 @@ package handlers
 
 import (
 	"context"
+	"errors"
+	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/abhinandanwadwa/overbookr/internal/db"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// Request/Response types
+// Request/Response types (unchanged)
 type JoinWaitlistRequest struct {
 	RequestedSeats int32 `json:"requested_seats" binding:"required,min=1"`
 }
@@ -23,7 +27,6 @@ type JoinWaitlistResponse struct {
 }
 
 // POST /events/:id/waitlist
-// Auth required
 func (h *EventsHandler) JoinWaitlist(c *gin.Context) {
 	var req JoinWaitlistRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -61,16 +64,47 @@ func (h *EventsHandler) JoinWaitlist(c *gin.Context) {
 	}
 
 	ctx := context.Background()
-	// Use a tx if you prefer; sql above computes position in INSERT atomically so tx isn't required.
 	q := h.db
 
-	// prepare params as pgtype where required
 	eventParam := pgtype.UUID{Bytes: eventID, Valid: true}
 	userParam := pgtype.UUID{Bytes: uid, Valid: true}
 
-	row, err := q.InsertWaitlist(ctx, db.InsertWaitlistParams{EventID: eventParam, UserID: userParam, RequestedSeats: req.RequestedSeats})
+	row, err := q.InsertWaitlist(ctx, db.InsertWaitlistParams{
+		EventID:        eventParam,
+		UserID:         userParam,
+		RequestedSeats: req.RequestedSeats,
+	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to join waitlist", "details": err.Error()})
+		// Try to detect Postgres unique-violation reliably
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			if pgErr.Code == "23505" {
+				// Duplicate entry -> the user already in waitlist for this event
+				c.JSON(http.StatusConflict, gin.H{
+					"error":   "already joined waitlist",
+					"details": pgErr.Detail,
+				})
+				return
+			}
+			// other pg errors -> forward as 500 with some details
+			log.Printf("JoinWaitlist: pg error: code=%s message=%s detail=%s", pgErr.Code, pgErr.Message, pgErr.Detail)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to join waitlist", "details": pgErr.Message})
+			return
+		}
+
+		// Fallback: string match (defensive)
+		errStr := err.Error()
+		if strings.Contains(errStr, "23505") || strings.Contains(strings.ToLower(errStr), "duplicate key") || strings.Contains(strings.ToLower(errStr), "unique constraint") {
+			c.JSON(http.StatusConflict, gin.H{
+				"error":   "already joined waitlist",
+				"details": errStr,
+			})
+			return
+		}
+
+		// Unknown error
+		log.Printf("JoinWaitlist: unexpected db error: %T %v", err, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to join waitlist", "details": errStr})
 		return
 	}
 
@@ -79,6 +113,5 @@ func (h *EventsHandler) JoinWaitlist(c *gin.Context) {
 		Position: row.Position,
 		Created:  row.CreatedAt.Time,
 	}
-	// 202 Accepted as requested
 	c.JSON(http.StatusAccepted, resp)
 }

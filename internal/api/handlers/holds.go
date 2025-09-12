@@ -8,12 +8,12 @@ import (
 	"github.com/abhinandanwadwa/overbookr/internal/db"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type HoldsHandler struct {
-	DB *pgx.Conn
+	DB *pgxpool.Pool
 }
 
 type CreateHoldRequest struct {
@@ -28,7 +28,7 @@ type CreateHoldResponse struct {
 
 const defaultHoldTTLSeconds = 300
 
-func NewHoldsHandler(dbconn *pgx.Conn) *HoldsHandler {
+func NewHoldsHandler(dbconn *pgxpool.Pool) *HoldsHandler {
 	return &HoldsHandler{
 		DB: dbconn,
 	}

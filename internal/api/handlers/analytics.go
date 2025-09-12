@@ -8,8 +8,8 @@ import (
 
 	"github.com/abhinandanwadwa/overbookr/internal/db"
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // AnalyticsHandler holds DB deps
@@ -18,7 +18,7 @@ type AnalyticsHandler struct {
 }
 
 // NewAnalyticsHandler creates handler
-func NewAnalyticsHandler(dbconn *pgx.Conn) *AnalyticsHandler {
+func NewAnalyticsHandler(dbconn *pgxpool.Pool) *AnalyticsHandler {
 	return &AnalyticsHandler{
 		db: db.New(dbconn),
 	}

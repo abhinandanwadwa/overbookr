@@ -14,11 +14,12 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type BookingsHandler struct {
 	db *db.Queries
-	DB *pgx.Conn
+	DB *pgxpool.Pool
 }
 
 type CreateBookingRequest struct {
@@ -48,7 +49,7 @@ const (
 	initialBackoff          = 100 * time.Millisecond
 )
 
-func NewBookingsHandler(dbconn *pgx.Conn) *BookingsHandler {
+func NewBookingsHandler(dbconn *pgxpool.Pool) *BookingsHandler {
 	return &BookingsHandler{
 		db: db.New(dbconn),
 		DB: dbconn,

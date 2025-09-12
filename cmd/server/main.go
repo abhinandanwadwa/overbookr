@@ -8,7 +8,6 @@ import (
 
 	"github.com/abhinandanwadwa/overbookr/internal/api/server"
 	"github.com/abhinandanwadwa/overbookr/internal/workers"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 )
@@ -40,20 +39,10 @@ func main() {
 	}
 	defer pool.Close()
 
-	// Connect to DB
-	conn, err := pgx.Connect(ctx, cfg.DB_URI)
-	if err != nil {
-		log.Fatal("Unable to connect to database:", err)
-		os.Exit(1)
-	}
-	defer func() {
-		_ = conn.Close(ctx)
-	}()
-
 	// --- Workers setup ---
 	// Create worker instances bound to the same DB connection
 	holdExpiryWorker := workers.NewHoldExpiryWorker(pool)
-	reconcileWorker := workers.NewReconcileWorker(conn)
+	reconcileWorker := workers.NewReconcileWorker(pool)
 
 	// 1) Start hold expiry loop (every 30s)
 	go func() {
@@ -89,7 +78,7 @@ func main() {
 	}()
 
 	// --- Server start ---
-	srv := server.NewServer(cfg, conn)
+	srv := server.NewServer(cfg, pool)
 	if err := srv.Start(); err != nil {
 		log.Printf("server exited: %v", err)
 		os.Exit(1)

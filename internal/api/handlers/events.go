@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
@@ -11,46 +12,47 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type EventsHandler struct {
 	db *db.Queries
-	DB *pgx.Conn
+	DB *pgxpool.Pool
 }
 
 type CreateEventRequest struct {
-	Name      string    `json:"name" binding:"required"`
-	Venue     string    `json:"venue" binding:"required"`
-	StartTime time.Time `json:"start_time" binding:"required"`
-	Capacity  int32     `json:"capacity" binding:"required"`
-	Metadata  []byte    `json:"metadata"`
+	Name      string          `json:"name" binding:"required"`
+	Venue     string          `json:"venue" binding:"required"`
+	StartTime time.Time       `json:"start_time" binding:"required"`
+	Capacity  int32           `json:"capacity" binding:"required"`
+	Metadata  json.RawMessage `json:"metadata"`
 }
 
 type CreateEventResponse struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Venue     string    `json:"venue"`
-	StartTime time.Time `json:"start_time"`
-	Capacity  int32     `json:"capacity"`
-	Metadata  []byte    `json:"metadata"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Venue     string          `json:"venue"`
+	StartTime time.Time       `json:"start_time"`
+	Capacity  int32           `json:"capacity"`
+	Metadata  json.RawMessage `json:"metadata"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
 }
 
 type EventResponse struct {
-	ID          string     `json:"id"`
-	Name        string     `json:"name"`
-	Venue       *string    `json:"venue"`
-	StartTime   *time.Time `json:"start_time"`
-	Capacity    int32      `json:"capacity"`
-	BookedCount int32      `json:"booked_count"`
-	Available   int32      `json:"available"`
-	Metadata    []byte     `json:"metadata"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Venue       *string         `json:"venue"`
+	StartTime   *time.Time      `json:"start_time"`
+	Capacity    int32           `json:"capacity"`
+	BookedCount int32           `json:"booked_count"`
+	Available   int32           `json:"available"`
+	Metadata    json.RawMessage `json:"metadata"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
 }
 
-func NewEventsHandler(dbconn *pgx.Conn) *EventsHandler {
+func NewEventsHandler(dbconn *pgxpool.Pool) *EventsHandler {
 	return &EventsHandler{
 		db: db.New(dbconn),
 		DB: dbconn,
