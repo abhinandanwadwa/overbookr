@@ -31,8 +31,7 @@ info:
     ```json
     {
       "error": "Error message",
-      "details": "Additional details",
-      "code": "ERROR_CODE"
+      "details": "Additional details"
     }
     ```
 
@@ -86,10 +85,6 @@ components:
           type: string
           description: Additional error details
           example: "The provided event ID is not a valid UUID"
-        code:
-          type: string
-          description: Error code for programmatic handling
-          example: "INVALID_UUID"
 
     Health:
       type: object
@@ -633,7 +628,6 @@ paths:
               example:
                 error: "Invalid input"
                 details: "Email is required"
-                code: "VALIDATION_ERROR"
         '409':
           description: User already exists
           content:
@@ -643,7 +637,6 @@ paths:
               example:
                 error: "User already exists"
                 details: "A user with this email already exists"
-                code: "USER_EXISTS"
 
   /users/login:
     post:
@@ -688,7 +681,6 @@ paths:
                 $ref: '#/components/schemas/Error'
               example:
                 error: "Invalid credentials"
-                code: "INVALID_CREDENTIALS"
 
   /events:
     post:
