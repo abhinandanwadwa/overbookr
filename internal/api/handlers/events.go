@@ -39,6 +39,14 @@ type CreateEventResponse struct {
 	UpdatedAt time.Time       `json:"updated_at"`
 }
 
+type UpdateEventRequest struct {
+	Name      *string          `json:"name"`
+	Venue     *string          `json:"venue"`
+	StartTime *time.Time       `json:"start_time"`
+	Capacity  *int32           `json:"capacity"`
+	Metadata  *json.RawMessage `json:"metadata"`
+}
+
 type EventResponse struct {
 	ID          string          `json:"id"`
 	Name        string          `json:"name"`
@@ -225,4 +233,168 @@ func (h *EventsHandler) GetEventByID(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+func (h *EventsHandler) UpdateEvent(c *gin.Context) {
+	idStr := c.Param("id")
+	eid, err := uuid.Parse(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid event id", "details": err.Error()})
+		return
+	}
+
+	var req UpdateEventRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload", "details": err.Error()})
+		return
+	}
+
+	ctx := context.Background()
+
+	existing, err := h.db.GetEventByID(ctx, pgtype.UUID{Bytes: eid, Valid: true})
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "event not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch event", "details": err.Error()})
+		return
+	}
+
+	// Name: UpdateEventParams.Name is string (non-nullable)
+	finalName := existing.Name
+	if req.Name != nil {
+		finalName = *req.Name
+	}
+
+	// Venue: UpdateEventParams.Venue is pgtype.Text (nullable)
+	var finalVenue pgtype.Text
+	if req.Venue != nil {
+		finalVenue = pgtype.Text{String: *req.Venue, Valid: true}
+	} else {
+		// existing.Venue is pgtype.Text in generated GetEventByIDRow
+		finalVenue = existing.Venue
+	}
+
+	// StartTime: UpdateEventParams.StartTime is pgtype.Timestamptz
+	var finalStart pgtype.Timestamptz
+	if req.StartTime != nil {
+		finalStart = pgtype.Timestamptz{Time: *req.StartTime, Valid: true}
+	} else {
+		finalStart = existing.StartTime
+	}
+
+	// Capacity: UpdateEventParams.Capacity is int32 (non-nullable)
+	finalCapacity := existing.Capacity
+	if req.Capacity != nil {
+		finalCapacity = *req.Capacity
+	}
+
+	// Metadata: UpdateEventParams.Metadata is []byte
+	var finalMeta []byte
+	if req.Metadata != nil {
+		finalMeta = []byte(*req.Metadata)
+	} else {
+		finalMeta = existing.Metadata
+	}
+
+	// 2. Precheck capacity
+	if req.Capacity != nil && *req.Capacity < existing.BookedCount {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "capacity cannot be less than booked_count",
+			"current": existing.BookedCount,
+			"given":   *req.Capacity,
+		})
+		return
+	}
+
+	// Build params in the exact generated types
+	params := db.UpdateEventParams{
+		ID:        pgtype.UUID{Bytes: eid, Valid: true},
+		Name:      finalName,
+		Venue:     finalVenue,
+		StartTime: finalStart,
+		Capacity:  finalCapacity,
+		Metadata:  finalMeta,
+	}
+
+	// Call UpdateEvent
+	updated, err := h.db.UpdateEvent(ctx, params)
+	if err != nil {
+		// Distinguish "no rows updated" (capacity too small or missing event) vs other errors.
+		if err == pgx.ErrNoRows {
+			// If event exists but capacity prevented update, return 409 with detail.
+			ev, gerr := h.db.GetEventByID(ctx, pgtype.UUID{Bytes: eid, Valid: true})
+			if gerr != nil {
+				// if event really doesn't exist
+				if gerr == pgx.ErrNoRows {
+					c.JSON(http.StatusNotFound, gin.H{"error": "event not found"})
+					return
+				}
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify event", "details": gerr.Error()})
+				return
+			}
+			// event exists -> probably capacity constraint
+			c.JSON(http.StatusConflict, gin.H{
+				"error":        "capacity too small",
+				"booked_count": ev.BookedCount,
+				"message":      "new capacity must be >= current booked_count",
+			})
+			return
+		}
+
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update event", "details": err.Error()})
+		return
+	}
+
+	// Build response using the EventResponse shape
+	var venuePtr *string
+	if updated.Venue.Valid {
+		venuePtr = &updated.Venue.String
+	}
+	var startPtr *time.Time
+	if updated.StartTime.Valid {
+		startPtr = &updated.StartTime.Time
+	}
+
+	resp := EventResponse{
+		ID:          updated.ID.String(),
+		Name:        updated.Name,
+		Venue:       venuePtr,
+		StartTime:   startPtr,
+		Capacity:    updated.Capacity,
+		BookedCount: updated.BookedCount,
+		Metadata:    updated.Metadata,
+		CreatedAt:   updated.CreatedAt.Time,
+		UpdatedAt:   updated.UpdatedAt.Time,
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+func (h *EventsHandler) DeleteEvent(c *gin.Context) {
+	idStr := c.Param("id")
+	eid, err := uuid.Parse(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid event id", "details": err.Error()})
+		return
+	}
+
+	ctx := context.Background()
+
+	// call sqlc-generated DeleteEvent (expects pgtype.UUID)
+	row, err := h.db.DeleteEvent(ctx, pgtype.UUID{Bytes: eid, Valid: true})
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "event not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete event", "details": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"id":      row.String(),
+		"deleted": true,
+	})
 }

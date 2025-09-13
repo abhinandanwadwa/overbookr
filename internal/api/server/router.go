@@ -52,6 +52,8 @@ func NewRouter(deps AppDeps) *gin.Engine {
 		events.POST("/", middleware.AuthMiddleware(), middleware.AdminMiddleware(), eventHandler.CreateEvent)
 		events.GET("/", eventHandler.GetEvents)
 		events.GET("/:id", eventHandler.GetEventByID)
+		events.PATCH("/:id", middleware.AuthMiddleware(), middleware.AdminMiddleware(), eventHandler.UpdateEvent)
+		events.DELETE("/:id", middleware.AuthMiddleware(), middleware.AdminMiddleware(), eventHandler.DeleteEvent)
 
 		// Seats
 		events.GET("/:id/seats", eventHandler.GetSeats)

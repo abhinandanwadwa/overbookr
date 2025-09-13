@@ -58,6 +58,18 @@ func (q *Queries) AddEvent(ctx context.Context, arg AddEventParams) (AddEventRow
 	return i, err
 }
 
+const deleteEvent = `-- name: DeleteEvent :one
+DELETE FROM events
+WHERE id = $1
+RETURNING id
+`
+
+func (q *Queries) DeleteEvent(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, deleteEvent, id)
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getAllEvents = `-- name: GetAllEvents :many
 SELECT id, name, venue, start_time, capacity, booked_count, metadata, created_at, updated_at FROM events ORDER BY start_time LIMIT $1 OFFSET $2
 `
@@ -103,6 +115,51 @@ SELECT id, name, venue, start_time, capacity, booked_count, metadata, created_at
 
 func (q *Queries) GetEventByID(ctx context.Context, id pgtype.UUID) (Event, error) {
 	row := q.db.QueryRow(ctx, getEventByID, id)
+	var i Event
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Venue,
+		&i.StartTime,
+		&i.Capacity,
+		&i.BookedCount,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateEvent = `-- name: UpdateEvent :one
+UPDATE events
+SET
+  name = COALESCE($2, name),
+  venue = COALESCE($3, venue),
+  start_time = COALESCE($4, start_time),
+  capacity = COALESCE($5, capacity),
+  metadata = COALESCE($6, metadata)
+WHERE id = $1
+RETURNING id, name, venue, start_time, capacity, booked_count, metadata, created_at, updated_at
+`
+
+type UpdateEventParams struct {
+	ID        pgtype.UUID
+	Name      string
+	Venue     pgtype.Text
+	StartTime pgtype.Timestamptz
+	Capacity  int32
+	Metadata  []byte
+}
+
+func (q *Queries) UpdateEvent(ctx context.Context, arg UpdateEventParams) (Event, error) {
+	row := q.db.QueryRow(ctx, updateEvent,
+		arg.ID,
+		arg.Name,
+		arg.Venue,
+		arg.StartTime,
+		arg.Capacity,
+		arg.Metadata,
+	)
 	var i Event
 	err := row.Scan(
 		&i.ID,
