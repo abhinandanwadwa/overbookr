@@ -124,6 +124,7 @@ func (h *EventsHandler) GetEvents(c *gin.Context) {
 	// Parse query params
 	limitStr := c.DefaultQuery("limit", strconv.Itoa(defaultLimit))
 	offsetStr := c.DefaultQuery("offset", strconv.Itoa(defaultOffset))
+	q := c.DefaultQuery("q", "")
 
 	limit64, err := strconv.ParseInt(limitStr, 10, 32)
 	if err != nil || limit64 <= 0 {
@@ -148,12 +149,14 @@ func (h *EventsHandler) GetEvents(c *gin.Context) {
 	}
 
 	// Call the sqlc-generated method
-	events, err := h.db.GetAllEvents(context.Background(), db.GetAllEventsParams{Limit: int32(limit64), Offset: int32(offset64)})
+	ctx := context.Background()
+	events, err := h.db.GetAllEvents(ctx, db.GetAllEventsParams{
+		Limit:   int32(limit64),
+		Offset:  int32(offset64),
+		Column3: q,
+	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "Failed to fetch events",
-			"details": err.Error(),
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch events", "details": err.Error()})
 		return
 	}
 

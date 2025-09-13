@@ -1,5 +1,9 @@
 -- name: GetAllEvents :many
-SELECT * FROM events ORDER BY start_time LIMIT $1 OFFSET $2;
+SELECT *
+FROM events
+WHERE ($3 = '' OR name ILIKE '%' || $3 || '%' OR venue ILIKE '%' || $3 || '%')
+ORDER BY start_time
+LIMIT $1 OFFSET $2;
 
 -- name: GetEventByID :one
 SELECT * FROM events WHERE id = $1;

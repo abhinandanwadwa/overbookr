@@ -71,16 +71,21 @@ func (q *Queries) DeleteEvent(ctx context.Context, id pgtype.UUID) (pgtype.UUID,
 }
 
 const getAllEvents = `-- name: GetAllEvents :many
-SELECT id, name, venue, start_time, capacity, booked_count, metadata, created_at, updated_at FROM events ORDER BY start_time LIMIT $1 OFFSET $2
+SELECT id, name, venue, start_time, capacity, booked_count, metadata, created_at, updated_at
+FROM events
+WHERE ($3 = '' OR name ILIKE '%' || $3 || '%' OR venue ILIKE '%' || $3 || '%')
+ORDER BY start_time
+LIMIT $1 OFFSET $2
 `
 
 type GetAllEventsParams struct {
-	Limit  int32
-	Offset int32
+	Limit   int32
+	Offset  int32
+	Column3 interface{}
 }
 
 func (q *Queries) GetAllEvents(ctx context.Context, arg GetAllEventsParams) ([]Event, error) {
-	rows, err := q.db.Query(ctx, getAllEvents, arg.Limit, arg.Offset)
+	rows, err := q.db.Query(ctx, getAllEvents, arg.Limit, arg.Offset, arg.Column3)
 	if err != nil {
 		return nil, err
 	}
