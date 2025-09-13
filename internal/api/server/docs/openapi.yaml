@@ -4,9 +4,9 @@ info:
   version: "1.0.0"
   description: |
     # Overbookr - Advanced Event Booking System
-    
+
     A comprehensive seat-level booking system with holds, waitlists, and real-time capacity management.
-    
+
     ## Key Features
     - **Seat-Level Bookings**: Individual seat selection and management
     - **Hold System**: Temporary seat holds with expiration
@@ -14,18 +14,18 @@ info:
     - **Atomic Capacity Control**: Prevents overselling with atomic database operations
     - **Idempotent Operations**: Safe retry mechanisms for critical operations
     - **Real-time Analytics**: Comprehensive booking and utilization insights
-    
+
     ## Authentication
     All protected endpoints require a valid JWT token in the Authorization header:
     ```
     Authorization: Bearer <your-jwt-token>
     ```
-    
+
     ## Rate Limiting
     - Hold creation: 5 requests per minute per user
     - Booking creation: 10 requests per minute per user
     - General API: 100 requests per minute per user
-    
+
     ## Error Handling
     All errors follow a consistent format:
     ```json
@@ -35,7 +35,7 @@ info:
       "code": "ERROR_CODE"
     }
     ```
-    
+
   contact:
     name: Overbookr API Support
     email: support@overbookr.com
@@ -74,7 +74,6 @@ components:
       description: JWT token obtained from login endpoint
 
   schemas:
-    # Common Schemas
     Error:
       type: object
       required: [error]
@@ -91,7 +90,7 @@ components:
           type: string
           description: Error code for programmatic handling
           example: "INVALID_UUID"
-    
+
     Health:
       type: object
       properties:
@@ -104,7 +103,6 @@ components:
           format: date-time
           example: "2024-01-15T10:30:00Z"
 
-    # User Schemas
     User:
       type: object
       properties:
@@ -176,7 +174,6 @@ components:
               description: JWT token for authentication
               example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 
-    # Event Schemas
     Event:
       type: object
       properties:
@@ -249,7 +246,6 @@ components:
           additionalProperties: true
           example: {"genre": "rock", "age_restriction": "18+"}
 
-    # Seat Schemas
     Seat:
       type: object
       properties:
@@ -290,7 +286,6 @@ components:
           maxItems: 1000
           example: ["A1", "A2", "A3", "B1", "B2"]
 
-    # Hold Schemas
     CreateHoldRequest:
       type: object
       required: [event_id, seat_nos]
@@ -320,7 +315,6 @@ components:
           description: When the hold expires
           example: "2024-01-15T10:35:00Z"
 
-    # Booking Schemas
     CreateBookingRequest:
       type: object
       required: [event_id, hold_token]
@@ -388,7 +382,6 @@ components:
           format: date-time
           example: "2024-01-15T10:30:00Z"
 
-    # Waitlist Schemas
     JoinWaitlistRequest:
       type: object
       required: [requested_seats]
@@ -416,7 +409,6 @@ components:
           format: date-time
           example: "2024-01-15T10:30:00Z"
 
-    # Analytics Schemas
     AnalyticsResponse:
       type: object
       properties:
@@ -551,8 +543,40 @@ components:
           minimum: 0
           example: 1200
 
+    UpdateEventRequest:
+      type: object
+      description: Partial update for an event (PATCH semantics). Omit fields you don't want to change.
+      properties:
+        name:
+          type: string
+          example: "New Event Name"
+        venue:
+          type: string
+          example: "Updated Venue"
+        start_time:
+          type: string
+          format: date-time
+          example: "2024-06-15T19:30:00Z"
+        capacity:
+          type: integer
+          minimum: 0
+          example: 1200
+        metadata:
+          type: object
+          additionalProperties: true
+          example: {"genre":"jazz"}
+
+    DeleteResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        deleted:
+          type: boolean
+          example: true
+
 paths:
-  # System Health
   /healthz:
     get:
       tags: [System]
@@ -569,7 +593,6 @@ paths:
                 status: "ok"
                 timestamp: "2024-01-15T10:30:00Z"
 
-  # Authentication Endpoints
   /users/register:
     post:
       tags: [Authentication]
@@ -667,7 +690,6 @@ paths:
                 error: "Invalid credentials"
                 code: "INVALID_CREDENTIALS"
 
-  # Event Management
   /events:
     post:
       tags: [Events]
@@ -718,7 +740,7 @@ paths:
     get:
       tags: [Events]
       summary: List Events
-      description: Get paginated list of events
+      description: Get paginated list of events. Use `q` to search by event name or venue (case-insensitive substring).
       parameters:
         - name: limit
           in: query
@@ -739,6 +761,13 @@ paths:
             minimum: 0
             default: 0
           example: 0
+        - name: q
+          in: query
+          description: Optional search term; filters events by name or venue using case-insensitive substring match
+          required: false
+          schema:
+            type: string
+            example: "concert"
       responses:
         '200':
           description: List of events
@@ -778,6 +807,112 @@ paths:
                 $ref: '#/components/schemas/Event'
         '400':
           description: Invalid UUID format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Event not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    patch:
+      tags: [Events]
+      summary: Update Event (partial)
+      description: Update an event (PATCH semantics). Only admins can update events. Omit fields you don't want to change.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Event UUID
+          schema:
+            type: string
+            format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateEventRequest'
+            example:
+              name: "Updated Concert Name"
+              capacity: 1200
+      responses:
+        '200':
+          description: Event updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+        '400':
+          description: Invalid request data (e.g. capacity < booked_count)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden - Admin access required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Event not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    delete:
+      tags: [Events]
+      summary: Delete Event
+      description: Delete an event and cascade-delete dependent rows (admin only).
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Event UUID
+          schema:
+            type: string
+            format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
+      responses:
+        '200':
+          description: Event deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResponse'
+              example:
+                id: "123e4567-e89b-12d3-a456-426614174000"
+                deleted: true
+        '400':
+          description: Invalid UUID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden - Admin access required
           content:
             application/json:
               schema:
@@ -936,7 +1071,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  # Hold Management
   /holds:
     post:
       tags: [Holds]
@@ -990,7 +1124,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  # Booking Management
   /bookings:
     post:
       tags: [Bookings]
@@ -1198,7 +1331,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  # Analytics
   /analytics/total_bookings:
     get:
       tags: [Analytics]
@@ -1292,6 +1424,5 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-# Global security
 security:
   - BearerAuth: []
