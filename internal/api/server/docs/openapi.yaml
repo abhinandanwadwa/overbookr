@@ -21,11 +21,6 @@ info:
     Authorization: Bearer <your-jwt-token>
     ```
 
-    ## Rate Limiting
-    - Hold creation: 5 requests per minute per user
-    - Booking creation: 10 requests per minute per user
-    - General API: 100 requests per minute per user
-
     ## Error Handling
     All errors follow a consistent format:
     ```json
